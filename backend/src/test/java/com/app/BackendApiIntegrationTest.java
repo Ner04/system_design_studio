@@ -117,4 +117,79 @@ class BackendApiIntegrationTest {
         .andExpect(jsonPath("$.markdown").isString())
         .andExpect(jsonPath("$.graph").doesNotExist());
   }
+
+  @Test
+  void generatesUrlShortenerDiagramAndDocument() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/ai/generate-diagram")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "prompt": "create a url shortner",
+                      "model": "deepseek"
+                    }
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.title").value("URL Shortener"))
+        .andExpect(jsonPath("$.graph.nodes[0].id").value("web-client"))
+        .andExpect(jsonPath("$.graph.nodes[3].id").value("redirect-service"))
+        .andExpect(jsonPath("$.graph.edges[7].target").value("click-stream"))
+        .andExpect(jsonPath("$.markdown").doesNotExist());
+
+    mockMvc
+        .perform(
+            post("/api/ai/generate-document")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "prompt": "create a url shortner",
+                      "model": "deepseek"
+                    }
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.title").value("URL Shortener"))
+        .andExpect(jsonPath("$.markdown").isString())
+        .andExpect(jsonPath("$.markdown").value(org.hamcrest.Matchers.containsString("## Overview")))
+        .andExpect(jsonPath("$.markdown").value(org.hamcrest.Matchers.containsString("Redirect Service")))
+        .andExpect(jsonPath("$.graph").doesNotExist());
+  }
+
+  @Test
+  void genericAiFallbackUsesPromptInsteadOfUberTemplate() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/ai/generate-diagram")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "prompt": "create inventory management app",
+                      "model": "llama3"
+                    }
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.title").value("Inventory Management App"))
+        .andExpect(jsonPath("$.graph.nodes[2].data.label").value("Inventory Management App Service"))
+        .andExpect(jsonPath("$.graph.nodes[0].id").value("client-app"));
+
+    mockMvc
+        .perform(
+            post("/api/ai/generate-document")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "prompt": "create inventory management app",
+                      "model": "llama3"
+                    }
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.title").value("Inventory Management App"))
+        .andExpect(jsonPath("$.markdown").value(org.hamcrest.Matchers.containsString("# Inventory Management App")))
+        .andExpect(jsonPath("$.markdown").value(org.hamcrest.Matchers.containsString("inventory management app")))
+        .andExpect(jsonPath("$.markdown").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Uber"))));
+  }
 }

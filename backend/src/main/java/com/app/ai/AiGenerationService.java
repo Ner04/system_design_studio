@@ -49,7 +49,7 @@ public class AiGenerationService {
         MockSystemDesign fallback = designFor(request.prompt());
         return new AiGenerationResponse(
             "MOCK_FALLBACK",
-            "Ollama was unavailable or returned invalid graph JSON, so deterministic mock output was used.",
+            fallbackMessage(exception, "graph JSON"),
             model,
             fallback.title(),
             graphFor(fallback),
@@ -89,7 +89,7 @@ public class AiGenerationService {
         MockSystemDesign fallback = designFor(request.prompt());
         return new AiGenerationResponse(
             "MOCK_FALLBACK",
-            "Ollama was unavailable, so deterministic mock Markdown was used.",
+            fallbackMessage(exception, "Markdown"),
             model,
             fallback.title(),
             null,
@@ -121,6 +121,9 @@ public class AiGenerationService {
             .orElseThrow(() -> new IllegalStateException("Ollama returned malformed graph JSON"));
       } catch (RuntimeException exception) {
         lastFailure = exception;
+        if (exception instanceof OllamaUnavailableException) {
+          break;
+        }
       }
     }
     throw lastFailure == null ? new IllegalStateException("Ollama graph generation failed") : lastFailure;
@@ -140,6 +143,9 @@ public class AiGenerationService {
         return markdown;
       } catch (RuntimeException exception) {
         lastFailure = exception;
+        if (exception instanceof OllamaUnavailableException) {
+          break;
+        }
       }
     }
     throw lastFailure == null ? new IllegalStateException("Ollama document generation failed") : lastFailure;
@@ -214,7 +220,17 @@ public class AiGenerationService {
   }
 
   private String titleFromPrompt(String prompt) {
-    String normalized = prompt.replaceFirst("(?i)^\\s*design\\s+", "").trim();
+    String lowerPrompt = prompt.toLowerCase(Locale.ROOT);
+    if (lowerPrompt.contains("url")
+        && (lowerPrompt.contains("shortener") || lowerPrompt.contains("shortner"))) {
+      return "URL Shortener";
+    }
+    String normalized =
+        prompt
+            .replaceFirst(
+                "(?i)^\\s*(design|create|build|make|generate|document|documentation\\s+for)\\s+",
+                "")
+            .trim();
     if (normalized.isBlank()) {
       return "Generated System Design";
     }
@@ -236,6 +252,9 @@ public class AiGenerationService {
 
   private MockSystemDesign designFor(String prompt) {
     String normalized = prompt.toLowerCase(Locale.ROOT);
+    if (normalized.contains("url") || normalized.contains("shortener") || normalized.contains("shortner")) {
+      return urlShortenerDesign();
+    }
     if (normalized.contains("whatsapp") || normalized.contains("chat")) {
       return whatsappDesign();
     }
@@ -245,11 +264,24 @@ public class AiGenerationService {
     if (normalized.contains("youtube") || normalized.contains("recommend")) {
       return youtubeDesign();
     }
-    return uberDesign();
+    if (normalized.contains("uber")
+        || (normalized.contains("driver") && normalized.contains("tracking"))) {
+      return uberDesign();
+    }
+    return genericDesign(prompt);
   }
 
   private String modelOrDefault(String model) {
     return model == null || model.isBlank() ? ollamaProperties.defaultModel() : model;
+  }
+
+  private String fallbackMessage(RuntimeException exception, String artifactType) {
+    String detail =
+        exception.getMessage() == null || exception.getMessage().isBlank()
+            ? "Ollama was unavailable"
+            : exception.getMessage();
+    detail = detail.replaceFirst("[.!?]+$", "");
+    return "%s. Showing deterministic mock %s instead.".formatted(detail, artifactType);
   }
 
   private JsonNode graphFor(MockSystemDesign design) {
@@ -378,6 +410,108 @@ public class AiGenerationService {
             "Kafka gives replayable location history and absorbs bursty mobile traffic.",
             "Redis GEO is used only for hot proximity lookup, not durable truth.",
             "Cassandra fits append-heavy location history."));
+  }
+
+  private MockSystemDesign urlShortenerDesign() {
+    return new MockSystemDesign(
+        "URL Shortener",
+        "A URL shortener creates compact aliases for long URLs, redirects readers with very low latency, tracks click events asynchronously, and protects public creation endpoints from abuse.",
+        List.of(
+            node("web-client", "mobile", "Web/Mobile Client", "Creates short links and follows redirects."),
+            node("api-gateway", "gateway", "API Gateway", "Terminates TLS, authenticates creators, and applies rate limits."),
+            node("short-link-service", "service", "Short Link Service", "Validates long URLs and creates unique short codes."),
+            node("redirect-service", "service", "Redirect Service", "Resolves short codes and returns HTTP 301/302 redirects."),
+            node("id-generator", "service", "ID Generator", "Allocates collision-resistant Base62 codes."),
+            node("link-db", "database", "Link Store", "Stores code-to-long-URL mappings and metadata."),
+            node("redis-cache", "redis", "Redirect Cache", "Caches hot short-code lookups."),
+            node("click-stream", "kafka", "Click Event Stream", "Captures redirect analytics without blocking users."),
+            node("analytics-service", "service", "Analytics Service", "Aggregates click metrics and abuse signals.")),
+        List.of(
+            edge("web-client", "api-gateway", "HTTPS"),
+            edge("api-gateway", "short-link-service", "create"),
+            edge("short-link-service", "id-generator", "allocate code"),
+            edge("short-link-service", "link-db", "persist mapping"),
+            edge("web-client", "redirect-service", "GET /{code}"),
+            edge("redirect-service", "redis-cache", "cache lookup"),
+            edge("redirect-service", "link-db", "cache miss"),
+            edge("redirect-service", "click-stream", "async click"),
+            edge("click-stream", "analytics-service", "aggregate")),
+        List.of(
+            "Create short links for valid long URLs.",
+            "Redirect short-code requests to the original URL.",
+            "Support custom aliases and expiration policies.",
+            "Track click analytics asynchronously."),
+        List.of(
+            "Short Link Service owns validation and code creation.",
+            "Redirect Service is optimized for hot read latency.",
+            "Redis caches popular code mappings.",
+            "Kafka decouples analytics from the redirect path.",
+            "Link Store remains the durable source of truth."),
+        "Shard link mappings by short-code hash, keep redirect services stateless, cache hot codes at Redis/CDN edge, and process click analytics asynchronously.",
+        List.of("hot celebrity links", "short-code collisions", "cache stampedes", "abusive link creation", "database read pressure"),
+        "Random Base62 codes are simple and hard to enumerate, while sequential ids are compact but need extra protection against guessing.",
+        List.of(
+            "How do you avoid short-code collisions?",
+            "When should redirects use 301 versus 302?",
+            "How do you protect against malicious URLs?",
+            "What is the cache invalidation strategy for expired links?"),
+        List.of(
+            "Redirect lookup is the critical low-latency path.",
+            "Analytics should never block redirects.",
+            "Rate limits and abuse checks protect public link creation."));
+  }
+
+  private MockSystemDesign genericDesign(String prompt) {
+    String title = titleFromPrompt(prompt);
+    String systemName = title.toLowerCase(Locale.ROOT);
+    String article = systemName.matches("^[aeiou].*") ? "An" : "A";
+    return new MockSystemDesign(
+        title,
+        "%s %s needs a clean ingress layer, focused domain services, durable storage, fast read paths, asynchronous background processing, and operational visibility."
+            .formatted(article, systemName),
+        List.of(
+            node("client-app", "mobile", "Client App", "Users interact with the %s through web or mobile screens.".formatted(systemName)),
+            node("api-gateway", "gateway", "API Gateway", "Authenticates users, applies rate limits, and routes requests."),
+            node("core-service", "service", "%s Service".formatted(title), "Owns the core workflows and business rules."),
+            node("worker-service", "service", "Background Worker", "Runs async jobs, notifications, imports, and scheduled tasks."),
+            node("primary-db", "database", "Primary Database", "Stores durable application records and transactional state."),
+            node("cache", "redis", "Read Cache", "Caches hot objects, sessions, and computed views."),
+            node("event-queue", "queue", "Event Queue", "Decouples write paths from background processing."),
+            node("object-storage", "database", "Object Storage", "Stores files, exports, media, and large artifacts."),
+            node("observability", "service", "Observability", "Collects logs, metrics, traces, and audit events.")),
+        List.of(
+            edge("client-app", "api-gateway", "HTTPS"),
+            edge("api-gateway", "core-service", "REST"),
+            edge("core-service", "primary-db", "read/write"),
+            edge("core-service", "cache", "hot reads"),
+            edge("core-service", "event-queue", "publish events"),
+            edge("event-queue", "worker-service", "consume jobs"),
+            edge("worker-service", "object-storage", "store artifacts"),
+            edge("core-service", "observability", "telemetry"),
+            edge("worker-service", "observability", "job metrics")),
+        List.of(
+            "Create, update, search, and manage %s records.".formatted(systemName),
+            "Support authenticated user workflows and role-aware access.",
+            "Run asynchronous jobs without blocking user requests.",
+            "Expose audit trails and operational dashboards."),
+        List.of(
+            "API Gateway protects public ingress.",
+            "%s Service owns domain workflows.".formatted(title),
+            "Primary Database is the durable source of truth.",
+            "Read Cache accelerates high-frequency lookups.",
+            "Event Queue keeps background work isolated from request latency."),
+        "Scale stateless services horizontally, shard or partition data around the dominant access key, cache hot views, and move slow workflows to queue-backed workers.",
+        List.of("hot search queries", "large exports", "background job backlog", "database contention", "cache invalidation"),
+        "A modular service boundary keeps the interview architecture understandable, while a single core service can still be split later if independent scaling needs appear.",
+        List.of(
+            "What is the source of truth for %s?".formatted(systemName),
+            "Which workflows must be synchronous?",
+            "What data should be cached and for how long?",
+            "How would you handle retries and duplicate jobs?"),
+        List.of(
+            "Generated from the prompt instead of a canned design.",
+            "The core path stays simple: client, gateway, service, database.",
+            "Background work is isolated through a queue so user requests stay responsive."));
   }
 
   private MockSystemDesign whatsappDesign() {

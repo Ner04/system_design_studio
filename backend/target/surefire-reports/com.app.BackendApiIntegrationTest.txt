@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.app.BackendApiIntegrationTest
 -------------------------------------------------------------------------------
-Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.054 s -- in com.app.BackendApiIntegrationTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.407 s -- in com.app.BackendApiIntegrationTest

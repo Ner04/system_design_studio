@@ -1,3 +1,4 @@
-com/app/BackendApiIntegrationTest.class
 com/app/JsonTestUtils.class
+com/app/BackendApiIntegrationTest.class
+com/app/ai/OllamaClientTest.class
 com/app/OllamaJsonSanitizerTest.class

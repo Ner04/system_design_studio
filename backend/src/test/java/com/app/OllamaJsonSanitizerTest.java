@@ -51,4 +51,30 @@ class OllamaJsonSanitizerTest {
   void rejectsMissingNodesAndEdges() {
     assertThat(sanitizer.sanitizeGraph("{\"nodes\": []}")).isEmpty();
   }
+
+  @Test
+  void acceptsDeepseekThinkingWrapperAndNestedDiagramKey() {
+    String raw =
+        """
+        <think>I should return JSON only.</think>
+        {
+          "diagram": {
+            "nodes": [
+              {"label": "API Gateway", "type": "gateway", "description": "Routes requests"},
+              {"id": "orders-db", "type": "database", "data": {"label": "Orders DB"}}
+            ],
+            "edges": [
+              {"source": "API Gateway", "target": "orders-db", "label": "SQL"}
+            ]
+          }
+        }
+        """;
+
+    JsonNode graph = sanitizer.sanitizeGraph(raw).orElseThrow();
+
+    assertThat(graph.get("nodes")).hasSize(2);
+    assertThat(graph.get("nodes").get(0).get("id").asText()).isEqualTo("api-gateway");
+    assertThat(graph.get("edges")).hasSize(1);
+    assertThat(graph.get("edges").get(0).get("source").asText()).isEqualTo("api-gateway");
+  }
 }

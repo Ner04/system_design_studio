@@ -24,13 +24,13 @@ export function useDesignGeneration(initialPrompt = examplePrompts[0]) {
   const runGeneration = async (nextPrompt = prompt) => {
     setPrompt(nextPrompt);
     setIsGenerating(true);
-    setLastMessage("Generating mock design...");
+    setLastMessage(`Generating with ${model}...`);
 
     try {
       const result = await generateSystemDesign(nextPrompt, model);
       if (result.graph) replaceGraph(result.graph);
       if (result.markdown) replaceDocument(result.title, result.markdown);
-      setLastMessage(`${result.status}: ${result.title}`);
+      setLastMessage(`${result.status}: ${result.title}. ${result.message}`);
     } catch {
       setLastMessage("Generation failed. Try another prompt.");
     } finally {

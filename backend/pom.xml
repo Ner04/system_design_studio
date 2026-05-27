@@ -63,11 +63,11 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- H2 for tests -->
+        <!-- H2 for local dev and tests -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>test</scope>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Testing -->

@@ -1,7 +1,7 @@
 import { localMockDesign } from "./mockAi";
 import type { AiGenerationResponse } from "../types/ai";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8080";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export async function generateSystemDesign(
   prompt: string,
@@ -25,7 +25,7 @@ export async function generateSystemDesign(
     ]);
 
     if (!diagramResponse.ok || !documentResponse.ok) {
-      throw new Error("Mock AI backend request failed");
+      throw new Error("AI backend request failed");
     }
 
     const diagram = (await diagramResponse.json()) as AiGenerationResponse;
@@ -39,7 +39,13 @@ export async function generateSystemDesign(
         ? diagram.interviewQuestions
         : document.interviewQuestions,
     };
-  } catch {
-    return localMockDesign(safePrompt, model);
+  } catch (error) {
+    const fallback = localMockDesign(safePrompt, model);
+    const reason = error instanceof Error ? error.message : "AI backend request failed";
+    return {
+      ...fallback,
+      status: "MOCK_FALLBACK",
+      message: `${reason}. Showing deterministic local output instead.`,
+    };
   }
 }

@@ -21,6 +21,7 @@ com/app/dto/AiGenerationResponse.class
 com/app/config/WebConfig.class
 com/app/controller/DiagramController.class
 com/app/dto/DocumentSaveRequest.class
+com/app/ai/OllamaUnavailableException.class
 com/app/config/WebSocketConfig.class
 com/app/repository/DocumentRepository.class
 com/app/ai/OllamaConfig.class
@@ -28,7 +29,9 @@ com/app/model/VersionHistoryEntity.class
 com/app/ai/OllamaProperties.class
 com/app/dto/DocumentResponse.class
 com/app/websocket/CollaborationController.class
+com/app/ai/OllamaClient$OllamaModel.class
 com/app/ai/OllamaJsonSanitizer.class
 com/app/ai/AiGenerationService.class
 com/app/dto/AiGenerateDocumentRequest.class
 com/app/ai/AiGenerationService$MockSystemDesign.class
+com/app/ai/OllamaClient$OllamaTagsResponse.class

@@ -24,10 +24,12 @@ export function localMockDesign(prompt: string, model = "mock-local"): AiGenerat
 
 function selectDesign(prompt: string): MockDesign {
   const normalized = prompt.toLowerCase();
+  if (normalized.includes("url") || normalized.includes("shortener") || normalized.includes("shortner")) return urlShortener;
   if (normalized.includes("whatsapp") || normalized.includes("chat")) return whatsapp;
   if (normalized.includes("netflix") || normalized.includes("stream")) return netflix;
   if (normalized.includes("youtube") || normalized.includes("recommend")) return youtube;
-  return uber;
+  if (normalized.includes("uber") || (normalized.includes("driver") && normalized.includes("tracking"))) return uber;
+  return genericDesign(prompt);
 }
 
 const uber: MockDesign = {
@@ -56,6 +58,37 @@ const uber: MockDesign = {
   markdown: designDoc("Uber Realtime Driver Tracking", "WebSockets, Kafka, Redis GEO, and Cassandra support low-latency driver tracking with durable replay and hot proximity lookup."),
   explanation: ["Kafka absorbs mobile spikes.", "Redis GEO powers nearby-driver lookup.", "WebSockets reduce polling overhead."],
   interviewQuestions: ["Why WebSockets?", "How should location events be partitioned?", "What if Redis is unavailable?"],
+};
+
+const urlShortener: MockDesign = {
+  title: "URL Shortener",
+  graph: {
+    nodes: [
+      node("client", "mobile", "Web/Mobile Client", "Creates short links and follows redirects."),
+      node("gateway", "gateway", "API Gateway", "Authenticates creators and rate limits traffic."),
+      node("short-link", "service", "Short Link Service", "Validates URLs and creates short codes."),
+      node("redirect", "service", "Redirect Service", "Resolves short codes with low latency."),
+      node("id-generator", "service", "ID Generator", "Allocates collision-resistant Base62 codes."),
+      node("link-store", "database", "Link Store", "Persists code-to-URL mappings."),
+      node("cache", "redis", "Redirect Cache", "Caches popular short-code lookups."),
+      node("clicks", "kafka", "Click Event Stream", "Captures redirect analytics asynchronously."),
+      node("analytics", "service", "Analytics Service", "Aggregates click metrics and abuse signals."),
+    ],
+    edges: [
+      edge("client", "gateway", "HTTPS"),
+      edge("gateway", "short-link", "create"),
+      edge("short-link", "id-generator", "allocate code"),
+      edge("short-link", "link-store", "persist"),
+      edge("client", "redirect", "GET /{code}"),
+      edge("redirect", "cache", "cache lookup"),
+      edge("redirect", "link-store", "cache miss"),
+      edge("redirect", "clicks", "async click"),
+      edge("clicks", "analytics", "aggregate"),
+    ],
+  },
+  markdown: designDoc("URL Shortener", "A URL shortener creates compact aliases, serves very fast redirects, caches hot mappings, and records click analytics asynchronously."),
+  explanation: ["Redirect lookup is the latency-critical path.", "Redis protects the database for hot links.", "Analytics are streamed so redirects stay fast."],
+  interviewQuestions: ["How do you avoid code collisions?", "When should redirects use 301 vs 302?", "How do you block malicious URLs?"],
 };
 
 const whatsapp: MockDesign = {
@@ -226,4 +259,151 @@ Mock generation favors clean interview structure over exhaustive implementation 
 - How do you handle retries?
 - Where would you add backpressure?
 `;
+}
+
+function genericDesign(prompt: string): MockDesign {
+  const title = titleFromPrompt(prompt);
+  const systemName = title.toLowerCase();
+  const graph: AiGraph = {
+    nodes: [
+      node("client-app", "mobile", "Client App", `Users interact with the ${systemName} through web or mobile screens.`),
+      node("api-gateway", "gateway", "API Gateway", "Authenticates users, applies rate limits, and routes requests."),
+      node("core-service", "service", `${title} Service`, "Owns the core workflows and business rules."),
+      node("worker-service", "service", "Background Worker", "Runs async jobs, notifications, imports, and scheduled tasks."),
+      node("primary-db", "database", "Primary Database", "Stores durable application records and transactional state."),
+      node("cache", "redis", "Read Cache", "Caches hot objects, sessions, and computed views."),
+      node("event-queue", "queue", "Event Queue", "Decouples write paths from background processing."),
+      node("object-storage", "database", "Object Storage", "Stores files, exports, media, and large artifacts."),
+      node("observability", "service", "Observability", "Collects logs, metrics, traces, and audit events."),
+    ],
+    edges: [
+      edge("client-app", "api-gateway", "HTTPS"),
+      edge("api-gateway", "core-service", "REST"),
+      edge("core-service", "primary-db", "read/write"),
+      edge("core-service", "cache", "hot reads"),
+      edge("core-service", "event-queue", "publish events"),
+      edge("event-queue", "worker-service", "consume jobs"),
+      edge("worker-service", "object-storage", "store artifacts"),
+      edge("core-service", "observability", "telemetry"),
+      edge("worker-service", "observability", "job metrics"),
+    ],
+  };
+
+  return {
+    title,
+    graph,
+    markdown: genericDesignDoc(title, prompt),
+    explanation: [
+      "Generated from the prompt instead of a canned design.",
+      "The core path stays simple: client, gateway, service, database.",
+      "Background work is isolated through a queue so user requests stay responsive.",
+    ],
+    interviewQuestions: [
+      `What is the source of truth for ${systemName}?`,
+      "Which workflows must be synchronous?",
+      "What data should be cached and for how long?",
+      "How would you handle retries and duplicate jobs?",
+    ],
+  };
+}
+
+function titleFromPrompt(prompt: string) {
+  const normalized = prompt
+    .replace(/^\s*(design|create|build|make|generate|document|documentation\s+for)\s+/i, "")
+    .replace(/[^\w\s-]/g, " ")
+    .trim();
+  const words = (normalized || "Generated System Design").split(/\s+/).slice(0, 6);
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+}
+
+function genericDesignDoc(title: string, prompt: string) {
+  const systemName = title.toLowerCase();
+  return `# ${title}
+
+## Overview
+
+This document describes a practical backend architecture for ${systemName}. Prompt: "${prompt.trim() || title}".
+
+## Requirements
+
+### Functional Requirements
+
+- Create, update, search, and manage ${systemName} records.
+- Support authenticated users and role-aware access.
+- Run asynchronous jobs without blocking user requests.
+- Expose audit trails and operational dashboards.
+
+### Non Functional Requirements
+
+- Horizontal scalability for stateless services.
+- High availability across critical user paths.
+- Low tail latency for common reads and writes.
+- Durable storage with backup and recovery.
+
+## Capacity Estimation
+
+| Metric | Starting Estimate |
+| --- | ---: |
+| Daily active users | 100k-1M |
+| Peak API traffic | 5k-50k req/sec |
+| Availability target | 99.9%-99.95% |
+| Hot cache TTL | 5-30 minutes |
+
+## Core Components
+
+- Client App sends authenticated requests.
+- API Gateway handles auth, rate limits, and routing.
+- ${title} Service owns domain workflows and validation.
+- Primary Database stores durable source-of-truth records.
+- Read Cache serves hot views and sessions.
+- Event Queue decouples slow work from request latency.
+- Background Worker processes notifications, imports, exports, and scheduled jobs.
+- Observability collects logs, metrics, traces, and audit events.
+
+## APIs
+
+\`\`\`http
+POST /v1/${slugify(title)}
+GET /v1/${slugify(title)}/{id}
+PATCH /v1/${slugify(title)}/{id}
+GET /v1/${slugify(title)}?query=
+POST /v1/${slugify(title)}/{id}/events
+\`\`\`
+
+## Database Design
+
+Use relational tables for transactional records, ownership, permissions, and audit history. Add secondary indexes around the dominant lookup keys, and store large files or generated exports in object storage.
+
+## Scaling
+
+Scale stateless services horizontally, partition high-volume tables around tenant or domain identifiers, cache hot reads, and move slow workflows to queue-backed workers.
+
+## Bottlenecks
+
+- Hot search queries and dashboard reads.
+- Large imports or exports.
+- Background job backlog.
+- Database lock contention.
+- Cache invalidation after updates.
+
+## Security
+
+Use short-lived tokens, role-based access control, input validation, rate limits, encryption in transit, encrypted secrets, and audit logs for sensitive actions.
+
+## Tradeoffs
+
+A single domain service is simpler to build and debug early. Split it later only when parts of ${systemName} need independent scaling, ownership, or deployment.
+
+## Interview Discussion Points
+
+- What is the source of truth?
+- Which workflows must be synchronous?
+- How should data be partitioned?
+- What should be cached and for how long?
+- How should retries and duplicate jobs be handled?
+`;
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "resources";
 }

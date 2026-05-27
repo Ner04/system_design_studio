@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Component;
@@ -35,7 +37,7 @@ public class OllamaJsonSanitizer {
   public Optional<JsonNode> sanitizeGraph(String rawResponse) {
     try {
       JsonNode root = objectMapper.readTree(extractJsonObject(rawResponse));
-      JsonNode graph = root.has("graph") ? root.get("graph") : root;
+      JsonNode graph = graphNode(root);
       if (!graph.has("nodes") || !graph.get("nodes").isArray()) {
         return Optional.empty();
       }
@@ -47,14 +49,19 @@ public class OllamaJsonSanitizer {
       ArrayNode nodes = objectMapper.createArrayNode();
       ArrayNode edges = objectMapper.createArrayNode();
       Set<String> nodeIds = new HashSet<>();
+      Map<String, String> nodeAliases = new HashMap<>();
 
       for (JsonNode node : graph.get("nodes")) {
         String label = textAt(node, "data", "label").orElseGet(() -> textAt(node, "label").orElse("Service"));
+        Optional<String> originalId = textAt(node, "id");
         String id = textAt(node, "id").map(this::slug).orElseGet(() -> slug(label));
         if (id.isBlank() || nodeIds.contains(id)) {
           id = "node-" + (nodes.size() + 1);
         }
         nodeIds.add(id);
+        String sanitizedId = id;
+        originalId.map(this::slug).ifPresent(alias -> nodeAliases.put(alias, sanitizedId));
+        nodeAliases.put(slug(label), sanitizedId);
 
         String type = textAt(node, "type").orElse("service");
         if (!ALLOWED_NODE_TYPES.contains(type)) {
@@ -75,8 +82,8 @@ public class OllamaJsonSanitizer {
       }
 
       for (JsonNode edge : graph.get("edges")) {
-        Optional<String> source = textAt(edge, "source").map(this::slug);
-        Optional<String> target = textAt(edge, "target").map(this::slug);
+        Optional<String> source = textAt(edge, "source").map(this::slug).map(nodeAliases::get);
+        Optional<String> target = textAt(edge, "target").map(this::slug).map(nodeAliases::get);
         if (source.isEmpty()
             || target.isEmpty()
             || !nodeIds.contains(source.get())
@@ -99,8 +106,22 @@ public class OllamaJsonSanitizer {
     }
   }
 
+  private JsonNode graphNode(JsonNode root) {
+    if (root.has("graph")) {
+      return root.get("graph");
+    }
+    if (root.has("diagram")) {
+      return root.get("diagram");
+    }
+    if (root.has("architecture")) {
+      return root.get("architecture");
+    }
+    return root;
+  }
+
   private String extractJsonObject(String rawResponse) {
     String cleaned = rawResponse.trim();
+    cleaned = cleaned.replaceAll("(?s)<think>.*?</think>", "").trim();
     if (cleaned.startsWith("```")) {
       cleaned = cleaned.replaceFirst("(?s)^```(?:json)?\\s*", "").replaceFirst("(?s)\\s*```$", "");
     }

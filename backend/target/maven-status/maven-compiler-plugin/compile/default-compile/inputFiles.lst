@@ -4,6 +4,7 @@
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaConfig.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaJsonSanitizer.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaProperties.java
+/Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaUnavailableException.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/config/CorsProperties.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/config/WebConfig.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/config/WebSocketConfig.java
