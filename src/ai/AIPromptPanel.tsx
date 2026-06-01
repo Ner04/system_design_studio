@@ -3,7 +3,9 @@ import { examplePrompts, supportedModels, useDesignGeneration } from "./useDesig
 import { useDiagramStore } from "../store/diagramStore";
 
 export function AIPromptPanel() {
-  const nodeCount = useDiagramStore((state) => state.nodes.length);
+  const nodeCount = useDiagramStore(
+    (state) => state.nodes.filter((node) => node.type === "architecture").length,
+  );
   const edgeCount = useDiagramStore((state) => state.edges.length);
   const { prompt, setPrompt, model, setModel, isGenerating, lastMessage, runGeneration } =
     useDesignGeneration();

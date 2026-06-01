@@ -4,8 +4,10 @@ import { useDiagramStore } from "../store/diagramStore";
 export function InspectorPanel() {
   const selectedNodeId = useDiagramStore((state) => state.selectedNodeId);
   const selectedNode = useDiagramStore((state) =>
-    state.nodes.find((node) => node.id === selectedNodeId),
+    state.nodes.find((node) => node.type === "architecture" && node.id === selectedNodeId),
   );
+  const selectedDescription =
+    selectedNode?.type === "architecture" ? selectedNode.data.description : undefined;
 
   return (
     <aside className="hidden h-full w-[320px] shrink-0 flex-col border-l border-white/10 bg-ink-900/80 backdrop-blur 2xl:flex">
@@ -17,7 +19,7 @@ export function InspectorPanel() {
           {selectedNode?.data.label ?? "No component selected"}
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-400">
-          {selectedNode?.data.description ??
+          {selectedDescription ??
             "Select a node to inspect component behavior, ownership, bottlenecks, and scaling notes."}
         </p>
       </div>

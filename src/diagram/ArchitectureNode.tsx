@@ -41,7 +41,7 @@ export const ArchitectureNode = memo(function ArchitectureNode({
   return (
     <div
       className={clsx(
-        "group w-[230px] rounded-lg border border-white/10 bg-ink-850/95 p-3 shadow-panel backdrop-blur transition duration-200",
+        "group relative flex h-[92px] w-[112px] flex-col items-center justify-center rounded-md border border-white/10 bg-ink-900/90 p-2 text-center shadow-panel backdrop-blur transition duration-200",
         selected && "border-accent-blue/70 shadow-glow",
       )}
     >
@@ -50,17 +50,17 @@ export const ArchitectureNode = memo(function ArchitectureNode({
         position={Position.Left}
         className="!h-3 !w-3 !border !border-white/30 !bg-ink-700"
       />
-      <div className="flex items-start gap-3">
+      <div className="flex flex-col items-center gap-2">
         <div
           className={clsx(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-gradient-to-br ring-1",
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-gradient-to-br ring-1",
             visual.className,
           )}
         >
-          <Icon size={19} strokeWidth={1.9} />
+          <Icon size={18} strokeWidth={1.85} />
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center justify-center gap-1">
             {isEditing ? (
               <input
                 autoFocus
@@ -70,32 +70,32 @@ export const ArchitectureNode = memo(function ArchitectureNode({
                   if (event.key === "Enter") saveLabel();
                   if (event.key === "Escape") setIsEditing(false);
                 }}
-                className="nodrag w-full rounded-md border border-white/10 bg-black/30 px-2 py-1 text-sm font-medium text-white outline-none ring-accent-blue/40 focus:ring-2"
+                className="nodrag w-[92px] rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] font-medium text-white outline-none ring-accent-blue/40 focus:ring-2"
               />
             ) : (
-              <p className="truncate text-sm font-semibold text-white">{data.label}</p>
+              <p className="line-clamp-2 min-h-[28px] text-[11px] font-medium leading-4 text-white">
+                {data.label}
+              </p>
             )}
             <button
               type="button"
               aria-label={isEditing ? "Save label" : "Edit label"}
               title={isEditing ? "Save label" : "Edit label"}
               onClick={isEditing ? saveLabel : () => setIsEditing(true)}
-              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
+              className="nodrag absolute right-1.5 top-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
             >
               {isEditing ? <Check size={14} /> : <Pencil size={13} />}
             </button>
           </div>
-          <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
+          <p className="mt-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-slate-500">
             {visual.label}
           </p>
         </div>
       </div>
-      <p className="mt-3 line-clamp-2 text-xs leading-5 text-slate-400">
-        {data.description}
-      </p>
-      <div className="mt-3 flex items-center justify-between border-t border-white/10 pt-2">
-        <span className="text-[11px] text-slate-500">p95 latency</span>
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusClassName}`}>
+      <div className="absolute bottom-1.5 right-1.5">
+        <span
+          className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium opacity-80 ${statusClassName}`}
+        >
           {status}
         </span>
       </div>

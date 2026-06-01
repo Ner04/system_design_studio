@@ -3,17 +3,18 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
   ReactFlow,
   useReactFlow,
   type NodeTypes,
 } from "@xyflow/react";
 import { ArchitectureNode } from "./ArchitectureNode";
+import { ArchitectureGroupNode } from "./ArchitectureGroupNode";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { useDiagramStore } from "../store/diagramStore";
 
 const nodeTypes: NodeTypes = {
   architecture: ArchitectureNode as NodeTypes[string],
+  architectureGroup: ArchitectureGroupNode as NodeTypes[string],
 };
 
 export function DiagramCanvas() {
@@ -31,10 +32,13 @@ export function DiagramCanvas() {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) return nodes;
 
-    return nodes.map((node) => ({
-      ...node,
-      hidden: !node.data.label.toLowerCase().includes(normalizedQuery),
-    }));
+    return nodes.map((node) => {
+      if (node.type !== "architecture") return node;
+      return {
+        ...node,
+        hidden: !node.data.label.toLowerCase().includes(normalizedQuery),
+      };
+    });
   }, [nodes, query]);
 
   useEffect(() => {
@@ -68,15 +72,19 @@ export function DiagramCanvas() {
           window.requestAnimationFrame(() => instance.fitView({ padding: 0.24 }));
           window.setTimeout(() => instance.fitView({ padding: 0.24 }), 180);
         }}
-        defaultViewport={{ x: 60, y: 80, zoom: 0.65 }}
+        defaultViewport={{ x: 220, y: 120, zoom: 0.72 }}
         minZoom={0.15}
         maxZoom={1.7}
         defaultEdgeOptions={{
           type: "smoothstep",
-          style: { stroke: "rgba(148, 163, 184, 0.72)", strokeWidth: 1.8 },
+          style: {
+            stroke: "rgba(226, 232, 240, 0.72)",
+            strokeWidth: 1.4,
+            strokeDasharray: "6 7",
+          },
           markerEnd: {
             type: "arrowclosed",
-            color: "rgba(148, 163, 184, 0.72)",
+            color: "rgba(226, 232, 240, 0.72)",
           },
         }}
         proOptions={{ hideAttribution: true }}
@@ -87,13 +95,6 @@ export function DiagramCanvas() {
           gap={24}
           size={1.25}
           color="rgba(148, 163, 184, 0.18)"
-        />
-        <MiniMap
-          pannable
-          zoomable
-          nodeStrokeWidth={3}
-          className="!bottom-5 !right-5 !h-28 !w-44 !rounded-lg !border !border-white/10 !bg-ink-900/90 !shadow-panel"
-          maskColor="rgba(8, 10, 15, 0.64)"
         />
         <Controls
           position="bottom-left"
