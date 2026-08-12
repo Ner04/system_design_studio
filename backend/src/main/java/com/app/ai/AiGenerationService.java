@@ -231,6 +231,9 @@ public class AiGenerationService {
             .replaceFirst(
                 "(?i)^\\s*(design|create|build|make|generate|document|documentation\\s+for)\\s+",
                 "")
+            // "design me splitwise" and "build a chat app" otherwise keep the filler
+            // word and title themselves "Me Splitwise" / "A Chat App".
+            .replaceFirst("(?i)^\\s*(me|us|for\\s+me|a|an|the|my|our)\\s+", "")
             .trim();
     if (normalized.isBlank()) {
       return "Generated System Design";

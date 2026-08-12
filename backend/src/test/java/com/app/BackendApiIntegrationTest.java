@@ -192,4 +192,35 @@ class BackendApiIntegrationTest {
         .andExpect(jsonPath("$.markdown").value(org.hamcrest.Matchers.containsString("inventory management app")))
         .andExpect(jsonPath("$.markdown").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Uber"))));
   }
+
+  @Test
+  void stripsFillerWordsFromConversationalPrompts() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/ai/generate-diagram")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "prompt": "design me splitwise",
+                      "model": "llama3"
+                    }
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.title").value("Splitwise"));
+
+    mockMvc
+        .perform(
+            post("/api/ai/generate-diagram")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "prompt": "build a expense sharing app",
+                      "model": "llama3"
+                    }
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.title").value("Expense Sharing App"));
+  }
 }
