@@ -165,7 +165,7 @@ public class AiGenerationService {
         Node schema:
         {
           "id": "stable-kebab-case-id",
-          "type": "service|database|cache|queue|gateway|mobile|cdn|loadBalancer|kafka|redis|websocket",
+          "type": "service|database|cache|queue|gateway|mobile|cdn|loadBalancer|kafka|redis|websocket|aws|ec2|lambda|ecs|eks|s3|rds|dynamodb|opensearch|cloudfront|apiGateway|sqs|sns|vpc",
           "data": {
             "label": "Human label",
             "description": "Short technical purpose"
@@ -185,6 +185,7 @@ public class AiGenerationService {
         - Use 6 to 10 nodes.
         - Every edge source and target must reference an existing node id.
         - Prefer realistic backend architecture components.
+        - Use the AWS-specific types when the prompt asks for an AWS or cloud-provider design.
 
         User prompt: %s
         """

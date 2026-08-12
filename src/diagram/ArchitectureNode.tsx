@@ -17,6 +17,7 @@ export const ArchitectureNode = memo(function ArchitectureNode({
   const visual = nodeVisuals[data.nodeType] ?? fallbackNodeVisual;
   const Icon = visual.icon;
   const status = data.status ?? "healthy";
+  const providerBadge = data.badge ?? data.provider;
   const statusClassName = useMemo(
     () =>
       ({
@@ -41,7 +42,7 @@ export const ArchitectureNode = memo(function ArchitectureNode({
   return (
     <div
       className={clsx(
-        "group relative flex h-[92px] w-[112px] flex-col items-center justify-center rounded-md border border-white/10 bg-ink-900/90 p-2 text-center shadow-panel backdrop-blur transition duration-200",
+        "group relative flex h-[96px] w-[124px] flex-col items-center justify-center rounded-md border border-white/10 bg-ink-900/90 p-2 text-center shadow-panel backdrop-blur transition duration-200 hover:-translate-y-0.5 hover:border-white/20",
         selected && "border-accent-blue/70 shadow-glow",
       )}
     >
@@ -50,6 +51,11 @@ export const ArchitectureNode = memo(function ArchitectureNode({
         position={Position.Left}
         className="!h-3 !w-3 !border !border-white/30 !bg-ink-700"
       />
+      {providerBadge ? (
+        <span className="absolute left-1.5 top-1.5 max-w-[52px] truncate rounded border border-white/10 bg-black/30 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.08em] text-slate-300">
+          {providerBadge}
+        </span>
+      ) : null}
       <div className="flex flex-col items-center gap-2">
         <div
           className={clsx(
@@ -73,7 +79,7 @@ export const ArchitectureNode = memo(function ArchitectureNode({
                 className="nodrag w-[92px] rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] font-medium text-white outline-none ring-accent-blue/40 focus:ring-2"
               />
             ) : (
-              <p className="line-clamp-2 min-h-[28px] text-[11px] font-medium leading-4 text-white">
+              <p className="line-clamp-2 min-h-[28px] px-1 text-[11px] font-medium leading-4 text-white">
                 {data.label}
               </p>
             )}

@@ -48,6 +48,31 @@ class OllamaJsonSanitizerTest {
   }
 
   @Test
+  void keepsCloudProviderNodeTypesAndNormalizesLooseSpellings() {
+    String raw =
+        """
+        {
+          "nodes": [
+            {"id": "cdn", "type": "cloudfront", "data": {"label": "CloudFront"}},
+            {"id": "fn", "type": "lambda", "data": {"label": "Lambda"}},
+            {"id": "lb", "type": "load_balancer", "data": {"label": "ALB"}},
+            {"id": "gw", "type": "API Gateway", "data": {"label": "Gateway"}},
+            {"id": "mystery", "type": "blockchain", "data": {"label": "Unknown"}}
+          ],
+          "edges": [{"source": "cdn", "target": "fn", "label": "invoke"}]
+        }
+        """;
+
+    JsonNode graph = sanitizer.sanitizeGraph(raw).orElseThrow();
+
+    assertThat(graph.get("nodes").get(0).get("type").asText()).isEqualTo("cloudfront");
+    assertThat(graph.get("nodes").get(1).get("type").asText()).isEqualTo("lambda");
+    assertThat(graph.get("nodes").get(2).get("type").asText()).isEqualTo("loadBalancer");
+    assertThat(graph.get("nodes").get(3).get("type").asText()).isEqualTo("apiGateway");
+    assertThat(graph.get("nodes").get(4).get("type").asText()).isEqualTo("service");
+  }
+
+  @Test
   void rejectsMissingNodesAndEdges() {
     assertThat(sanitizer.sanitizeGraph("{\"nodes\": []}")).isEmpty();
   }

@@ -7,23 +7,41 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import { create } from "zustand";
+import type { ArchitectureComponent } from "../diagram/componentCatalog";
 import { seedEdges, seedNodes } from "../data/seedDiagram";
 import type { AiGraph } from "../types/ai";
 import type {
+  AnnotationTone,
   ArchitectureDiagramNode,
   ArchitectureFlowEdge,
   ArchitectureFlowNode,
   ArchitectureGroupNode,
   ArchitectureNodeType,
+  CommentFlowNode,
+  FrameFlowNode,
+  ImageFlowNode,
+  ShapeFlowNode,
+  ShapeKind,
+  StickyNoteFlowNode,
+  TextFlowNode,
 } from "../types/diagram";
 
 type ViewMode = "canvas" | "document" | "both";
 type ThemeMode = "dark" | "light";
 
+/** Bounding box in flow coordinates, produced by dragging a drawing tool. */
+export type DrawRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 type DiagramState = {
   nodes: ArchitectureDiagramNode[];
   edges: ArchitectureFlowEdge[];
   selectedNodeId?: string;
+  copiedNode?: ArchitectureDiagramNode;
   query: string;
   viewMode: ViewMode;
   theme: ThemeMode;
@@ -32,7 +50,23 @@ type DiagramState = {
   onConnect: (connection: Connection) => void;
   selectNode: (nodeId?: string) => void;
   updateNodeLabel: (nodeId: string, label: string) => void;
+  updateNodeText: (nodeId: string, text: string) => void;
+  updateNodeTone: (nodeId: string, tone: AnnotationTone) => void;
   addArchitectureNode: (nodeType: ArchitectureNodeType) => void;
+  addArchitectureComponent: (component: ArchitectureComponent, position?: { x: number; y: number }) => void;
+  addShapeNode: (kind: ShapeKind, rect: DrawRect) => void;
+  addTextNode: (rect: DrawRect) => void;
+  addStickyNode: (rect: DrawRect) => void;
+  addCommentNode: (rect: DrawRect) => void;
+  addImageNode: (src: string, name: string, rect: DrawRect) => void;
+  addFrameNode: (rect: DrawRect) => void;
+  groupSelected: () => void;
+  eraseNode: (nodeId: string) => void;
+  eraseEdge: (edgeId: string) => void;
+  deleteSelected: () => void;
+  duplicateSelected: () => void;
+  copySelected: () => void;
+  pasteCopied: () => void;
   replaceGraph: (graph: AiGraph) => void;
   setQuery: (query: string) => void;
   setViewMode: (viewMode: ViewMode) => void;
@@ -51,6 +85,20 @@ const nodeLabels: Record<ArchitectureNodeType, string> = {
   kafka: "Kafka Topic",
   redis: "Redis Cache",
   websocket: "WebSocket Gateway",
+  aws: "AWS Cloud",
+  ec2: "EC2",
+  lambda: "Lambda",
+  ecs: "ECS",
+  eks: "EKS",
+  s3: "S3",
+  rds: "RDS",
+  dynamodb: "DynamoDB",
+  opensearch: "OpenSearch",
+  cloudfront: "CloudFront",
+  apiGateway: "API Gateway",
+  sqs: "SQS",
+  sns: "SNS",
+  vpc: "VPC",
 };
 
 const groupSections = [
@@ -74,7 +122,7 @@ const groupSections = [
     y: -300,
     width: 285,
     height: 245,
-    types: ["cdn"],
+    types: ["cdn", "cloudfront"],
   },
   {
     id: "gateway-layer",
@@ -85,7 +133,7 @@ const groupSections = [
     y: -300,
     width: 285,
     height: 245,
-    types: ["gateway", "loadBalancer", "websocket"],
+    types: ["gateway", "loadBalancer", "websocket", "apiGateway", "vpc"],
   },
   {
     id: "core-services",
@@ -96,7 +144,7 @@ const groupSections = [
     y: -15,
     width: 565,
     height: 275,
-    types: ["service"],
+    types: ["service", "aws", "ec2", "lambda", "ecs", "eks"],
   },
   {
     id: "processing-pipeline",
@@ -107,7 +155,7 @@ const groupSections = [
     y: -15,
     width: 285,
     height: 275,
-    types: ["queue", "kafka"],
+    types: ["queue", "kafka", "sqs", "sns"],
   },
   {
     id: "data-storage",
@@ -118,7 +166,7 @@ const groupSections = [
     y: 300,
     width: 890,
     height: 190,
-    types: ["database", "cache", "redis"],
+    types: ["database", "cache", "redis", "s3", "rds", "dynamodb", "opensearch"],
   },
 ] as const;
 
@@ -133,6 +181,102 @@ const sectionByType = new Map<ArchitectureNodeType, GroupSection>(
 
 function isArchitectureNode(node: ArchitectureDiagramNode): node is ArchitectureFlowNode {
   return node.type === "architecture";
+}
+
+let drawCounter = 0;
+
+function nextDrawId(prefix: string) {
+  drawCounter += 1;
+  return `${prefix}-${drawCounter}-${Date.now().toString(36)}`;
+}
+
+/**
+ * React Flow stores a child node's position relative to its parent. Anything that
+ * lifts a node out of its parent (duplicate, paste, ungroup) has to add the parent
+ * offsets back in, or the copy lands near the canvas origin instead of next to the
+ * original.
+ */
+function absolutePosition(node: ArchitectureDiagramNode, nodes: ArchitectureDiagramNode[]) {
+  const nodesById = new Map(nodes.map((candidate) => [candidate.id, candidate]));
+  let { x, y } = node.position;
+  let parentId = node.parentId;
+  const visited = new Set<string>([node.id]);
+
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = nodesById.get(parentId);
+    if (!parent) break;
+    x += parent.position.x;
+    y += parent.position.y;
+    parentId = parent.parentId;
+  }
+
+  return { x, y };
+}
+
+function nodeSize(node: ArchitectureDiagramNode) {
+  return {
+    width: node.measured?.width ?? node.width ?? Number(node.style?.width ?? 124),
+    height: node.measured?.height ?? node.height ?? Number(node.style?.height ?? 96),
+  };
+}
+
+/** Detaches a node from its parent so it can live at the top level of the canvas. */
+function detachFromParent(
+  node: ArchitectureDiagramNode,
+  nodes: ArchitectureDiagramNode[],
+  offset: number,
+) {
+  const origin = absolutePosition(node, nodes);
+  return {
+    parentId: undefined,
+    extent: undefined,
+    position: { x: origin.x + offset, y: origin.y + offset },
+  };
+}
+
+/** Only architecture nodes carry a `label`; drawable nodes carry `text`. */
+function withCopySuffix(data: Record<string, unknown>) {
+  if (typeof data.label === "string") {
+    return { ...data, label: `${data.label} Copy` };
+  }
+  return { ...data };
+}
+
+function selectedIds(nodes: ArchitectureDiagramNode[], selectedNodeId?: string) {
+  const ids = new Set(nodes.filter((node) => node.selected).map((node) => node.id));
+  if (selectedNodeId) ids.add(selectedNodeId);
+  return ids;
+}
+
+/** Expands a set of node ids to include everything parented to them. */
+function withDescendants(ids: Set<string>, nodes: ArchitectureDiagramNode[]) {
+  const doomed = new Set(ids);
+  let didGrow = true;
+
+  while (didGrow) {
+    didGrow = false;
+    for (const node of nodes) {
+      if (node.parentId && doomed.has(node.parentId) && !doomed.has(node.id)) {
+        doomed.add(node.id);
+        didGrow = true;
+      }
+    }
+  }
+
+  return doomed;
+}
+
+function removeNodes(state: Pick<DiagramState, "nodes" | "edges">, ids: Set<string>) {
+  return {
+    nodes: state.nodes.filter((node) => !ids.has(node.id)),
+    edges: state.edges.filter((edge) => !ids.has(edge.source) && !ids.has(edge.target)),
+  };
+}
+
+/** Clears selection everywhere, then drops the freshly created node in as selected. */
+function appendSelected(nodes: ArchitectureDiagramNode[], node: ArchitectureDiagramNode) {
+  return [...nodes.map((existing) => ({ ...existing, selected: false })), node];
 }
 
 function sectionForNode(node: AiGraph["nodes"][number]) {
@@ -168,8 +312,8 @@ function buildGroupedNodes(graphNodes: AiGraph["nodes"]): ArchitectureDiagramNod
   const componentNodes: ArchitectureFlowNode[] = activeSections.flatMap((section) => {
     const sectionNodes = nodesBySection[section.id] ?? [];
     const columns = section.width >= 760 ? 6 : section.width >= 480 ? 4 : 2;
-    const tileWidth = 112;
-    const tileHeight = 92;
+    const tileWidth = 124;
+    const tileHeight = 96;
     const gapX = Math.max(18, Math.floor((section.width - 56 - columns * tileWidth) / Math.max(columns - 1, 1)));
     const gapY = 28;
 
@@ -203,6 +347,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   nodes: seedNodes,
   edges: seedEdges,
   selectedNodeId: "tracking-service",
+  copiedNode: undefined,
   query: "",
   viewMode: "canvas",
   theme: "dark",
@@ -234,6 +379,18 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           : node,
       ) as ArchitectureDiagramNode[],
     }),
+  updateNodeText: (nodeId, text) =>
+    set({
+      nodes: get().nodes.map((node) =>
+        node.id === nodeId ? { ...node, data: { ...node.data, text } } : node,
+      ) as ArchitectureDiagramNode[],
+    }),
+  updateNodeTone: (nodeId, tone) =>
+    set({
+      nodes: get().nodes.map((node) =>
+        node.id === nodeId ? { ...node, data: { ...node.data, tone } } : node,
+      ) as ArchitectureDiagramNode[],
+    }),
   addArchitectureNode: (nodeType) => {
     const nextIndex = get().nodes.filter(isArchitectureNode).length + 1;
     const node: ArchitectureFlowNode = {
@@ -254,6 +411,236 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     set({
       nodes: [...get().nodes, node],
       selectedNodeId: node.id,
+    });
+  },
+  addArchitectureComponent: (component, position) => {
+    const existingNodes = get().nodes.filter(isArchitectureNode);
+    const nextIndex = existingNodes.length + 1;
+    const node: ArchitectureFlowNode = {
+      id: `${component.id}-${nextIndex}`,
+      type: "architecture",
+      position: position ?? {
+        x: Math.round(Math.random() * 360 - 120),
+        y: Math.round(Math.random() * 260 - 90),
+      },
+      data: {
+        label: component.label,
+        nodeType: component.nodeType,
+        description: component.description,
+        status: "healthy",
+        provider: component.provider,
+        badge: component.badge,
+      },
+    };
+
+    set({
+      nodes: [...get().nodes, node],
+      selectedNodeId: node.id,
+      viewMode: "canvas",
+    });
+  },
+  addShapeNode: (kind, rect) => {
+    const node: ShapeFlowNode = {
+      id: nextDrawId(kind),
+      type: "shape",
+      position: { x: rect.x, y: rect.y },
+      style: { width: rect.width, height: rect.height },
+      zIndex: 6,
+      selected: true,
+      data: { kind, text: "", tone: "blue" },
+    };
+
+    set({ nodes: appendSelected(get().nodes, node), selectedNodeId: node.id });
+  },
+  addTextNode: (rect) => {
+    const node: TextFlowNode = {
+      id: nextDrawId("text"),
+      type: "text",
+      position: { x: rect.x, y: rect.y },
+      style: { width: rect.width, height: rect.height },
+      zIndex: 8,
+      selected: true,
+      data: { text: "" },
+    };
+
+    set({ nodes: appendSelected(get().nodes, node), selectedNodeId: node.id });
+  },
+  addStickyNode: (rect) => {
+    const node: StickyNoteFlowNode = {
+      id: nextDrawId("sticky"),
+      type: "sticky",
+      position: { x: rect.x, y: rect.y },
+      style: { width: rect.width, height: rect.height },
+      zIndex: 8,
+      selected: true,
+      data: { text: "", tone: "amber" },
+    };
+
+    set({ nodes: appendSelected(get().nodes, node), selectedNodeId: node.id });
+  },
+  addCommentNode: (rect) => {
+    const node: CommentFlowNode = {
+      id: nextDrawId("comment"),
+      type: "comment",
+      position: { x: rect.x, y: rect.y },
+      style: { width: rect.width, height: rect.height },
+      zIndex: 9,
+      selected: true,
+      data: { text: "", author: "You" },
+    };
+
+    set({ nodes: appendSelected(get().nodes, node), selectedNodeId: node.id });
+  },
+  addImageNode: (src, name, rect) => {
+    const node: ImageFlowNode = {
+      id: nextDrawId("image"),
+      type: "image",
+      position: { x: rect.x, y: rect.y },
+      style: { width: rect.width, height: rect.height },
+      zIndex: 7,
+      selected: true,
+      data: { src, text: name },
+    };
+
+    set({ nodes: appendSelected(get().nodes, node), selectedNodeId: node.id });
+  },
+  addFrameNode: (rect) => {
+    const node: FrameFlowNode = {
+      id: nextDrawId("frame"),
+      type: "frame",
+      position: { x: rect.x, y: rect.y },
+      style: { width: rect.width, height: rect.height },
+      // Frames are containers, so they sit behind everything drawn on top of them.
+      zIndex: 1,
+      selected: true,
+      data: { text: "Frame" },
+    };
+
+    set({ nodes: appendSelected(get().nodes, node), selectedNodeId: node.id });
+  },
+  groupSelected: () => {
+    const { nodes } = get();
+    const targets = nodes.filter(
+      (node) => node.selected && node.type !== "architectureGroup" && node.type !== "frame",
+    );
+    if (targets.length < 2) return;
+
+    const boxes = targets.map((node) => {
+      const origin = absolutePosition(node, nodes);
+      const size = nodeSize(node);
+      return { origin, size };
+    });
+
+    const padding = 26;
+    const headerHeight = 34;
+    const minX = Math.min(...boxes.map((box) => box.origin.x)) - padding;
+    const minY = Math.min(...boxes.map((box) => box.origin.y)) - headerHeight;
+    const maxX = Math.max(...boxes.map((box) => box.origin.x + box.size.width)) + padding;
+    const maxY = Math.max(...boxes.map((box) => box.origin.y + box.size.height)) + padding;
+
+    const frame: FrameFlowNode = {
+      id: nextDrawId("frame"),
+      type: "frame",
+      position: { x: minX, y: minY },
+      style: { width: maxX - minX, height: maxY - minY },
+      zIndex: 1,
+      data: { text: "Group" },
+    };
+
+    const targetIds = new Set(targets.map((node) => node.id));
+    const reparented = nodes.map((node) => {
+      if (!targetIds.has(node.id)) return node;
+      const origin = absolutePosition(node, nodes);
+      return {
+        ...node,
+        parentId: frame.id,
+        position: { x: origin.x - minX, y: origin.y - minY },
+        selected: false,
+      };
+    }) as ArchitectureDiagramNode[];
+
+    // The frame has to precede its children in the array or React Flow cannot
+    // resolve the parent when it lays the children out.
+    set({ nodes: [frame, ...reparented], selectedNodeId: frame.id });
+  },
+  eraseNode: (nodeId) => {
+    const { nodes, edges, selectedNodeId } = get();
+    const doomed = withDescendants(new Set([nodeId]), nodes);
+
+    set({
+      ...removeNodes({ nodes, edges }, doomed),
+      selectedNodeId: selectedNodeId && doomed.has(selectedNodeId) ? undefined : selectedNodeId,
+    });
+  },
+  eraseEdge: (edgeId) => {
+    set({ edges: get().edges.filter((edge) => edge.id !== edgeId) });
+  },
+  deleteSelected: () => {
+    const { selectedNodeId, nodes, edges } = get();
+    const doomed = withDescendants(selectedIds(nodes, selectedNodeId), nodes);
+    if (!doomed.size) return;
+
+    set({
+      ...removeNodes({ nodes, edges }, doomed),
+      selectedNodeId: undefined,
+    });
+  },
+  duplicateSelected: () => {
+    const { nodes, selectedNodeId } = get();
+    const selected = nodes.find(
+      (node) => node.id === selectedNodeId && node.type !== "architectureGroup",
+    );
+    if (!selected) return;
+
+    const duplicate = {
+      ...selected,
+      ...detachFromParent(selected, nodes, 36),
+      id: `${selected.id}-copy-${Date.now()}`,
+      data: withCopySuffix(selected.data),
+      selected: true,
+    } as ArchitectureDiagramNode;
+
+    set({
+      nodes: appendSelected(nodes, duplicate),
+      selectedNodeId: duplicate.id,
+      viewMode: "canvas",
+    });
+  },
+  copySelected: () => {
+    const { nodes, selectedNodeId } = get();
+    const selected = nodes.find(
+      (node) => node.id === selectedNodeId && node.type !== "architectureGroup",
+    );
+    if (!selected) return;
+
+    // Store the copy already detached, so the offset is applied in absolute space
+    // no matter how many times it is pasted.
+    set({
+      copiedNode: {
+        ...selected,
+        ...detachFromParent(selected, nodes, 0),
+      } as ArchitectureDiagramNode,
+    });
+  },
+  pasteCopied: () => {
+    const { nodes, copiedNode } = get();
+    if (!copiedNode) return;
+
+    const pasted = {
+      ...copiedNode,
+      id: `${copiedNode.id}-paste-${Date.now()}`,
+      position: {
+        x: copiedNode.position.x + 48,
+        y: copiedNode.position.y + 48,
+      },
+      selected: true,
+    } as ArchitectureDiagramNode;
+
+    set({
+      nodes: appendSelected(nodes, pasted),
+      selectedNodeId: pasted.id,
+      copiedNode: pasted,
+      viewMode: "canvas",
     });
   },
   replaceGraph: (graph) => {

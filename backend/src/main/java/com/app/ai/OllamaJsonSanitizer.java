@@ -6,14 +6,20 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 @Component
 public class OllamaJsonSanitizer {
 
+  /**
+   * Mirrors ArchitectureNodeType in the frontend. A type the frontend cannot render
+   * would show up with no icon, so anything unrecognised is coerced to "service".
+   */
   private static final Set<String> ALLOWED_NODE_TYPES =
       Set.of(
           "service",
@@ -26,7 +32,29 @@ public class OllamaJsonSanitizer {
           "loadBalancer",
           "kafka",
           "redis",
-          "websocket");
+          "websocket",
+          "aws",
+          "ec2",
+          "lambda",
+          "ecs",
+          "eks",
+          "s3",
+          "rds",
+          "dynamodb",
+          "opensearch",
+          "cloudfront",
+          "apiGateway",
+          "sqs",
+          "sns",
+          "vpc");
+
+  /**
+   * Models rarely reproduce the exact camelCase spelling, so "load_balancer" and
+   * "Load Balancer" resolve to "loadBalancer" instead of collapsing to "service".
+   */
+  private static final Map<String, String> NODE_TYPE_BY_NORMALIZED_NAME =
+      ALLOWED_NODE_TYPES.stream()
+          .collect(Collectors.toMap(OllamaJsonSanitizer::normalizeTypeName, type -> type));
 
   private final ObjectMapper objectMapper;
 
@@ -63,10 +91,7 @@ public class OllamaJsonSanitizer {
         originalId.map(this::slug).ifPresent(alias -> nodeAliases.put(alias, sanitizedId));
         nodeAliases.put(slug(label), sanitizedId);
 
-        String type = textAt(node, "type").orElse("service");
-        if (!ALLOWED_NODE_TYPES.contains(type)) {
-          type = "service";
-        }
+        String type = resolveNodeType(textAt(node, "type").orElse("service"));
 
         ObjectNode data = objectMapper.createObjectNode();
         data.put("label", truncate(label, 80));
@@ -147,6 +172,17 @@ public class OllamaJsonSanitizer {
       return Optional.empty();
     }
     return textAt(parentNode, field);
+  }
+
+  private String resolveNodeType(String requestedType) {
+    if (ALLOWED_NODE_TYPES.contains(requestedType)) {
+      return requestedType;
+    }
+    return NODE_TYPE_BY_NORMALIZED_NAME.getOrDefault(normalizeTypeName(requestedType), "service");
+  }
+
+  private static String normalizeTypeName(String value) {
+    return value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "");
   }
 
   private String slug(String value) {

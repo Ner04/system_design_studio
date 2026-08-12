@@ -43,6 +43,23 @@ textarea {
   cursor: grabbing;
 }
 
+.canvas-erasing .react-flow__pane,
+.canvas-erasing .react-flow__node,
+.canvas-erasing .react-flow__edge {
+  cursor: crosshair;
+}
+
+.canvas-erasing .react-flow__node:hover {
+  opacity: 0.45;
+  outline: 1px solid rgba(255, 122, 144, 0.9);
+  outline-offset: 2px;
+}
+
+.canvas-erasing .react-flow__edge:hover .react-flow__edge-path {
+  stroke: rgba(255, 122, 144, 0.95);
+  stroke-width: 3;
+}
+
 .architecture-canvas .react-flow__edge-path {
   filter: drop-shadow(0 0 8px rgba(90, 167, 255, 0.1));
 }
