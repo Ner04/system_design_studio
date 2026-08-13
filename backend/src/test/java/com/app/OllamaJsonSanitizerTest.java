@@ -78,6 +78,81 @@ class OllamaJsonSanitizerTest {
   }
 
   @Test
+  void reportsNodesLeftStrandedWhenTheModelForgetsEdges() {
+    // Shape is valid, so sanitizeGraph accepts it; only the structural check sees the islands.
+    String raw =
+        """
+        {
+          "nodes": [
+            {"id": "client", "type": "mobile", "data": {"label": "Client"}},
+            {"id": "gateway", "type": "gateway", "data": {"label": "Gateway"}},
+            {"id": "orders", "type": "service", "data": {"label": "Order Service"}},
+            {"id": "orders-db", "type": "database", "data": {"label": "Order DB"}},
+            {"id": "reporting", "type": "service", "data": {"label": "Reporting"}}
+          ],
+          "edges": [
+            {"source": "client", "target": "gateway", "label": "HTTPS"},
+            {"source": "gateway", "target": "orders", "label": "REST"},
+            {"source": "orders", "target": "orders-db", "label": "persist"}
+          ]
+        }
+        """;
+
+    JsonNode graph = sanitizer.sanitizeGraph(raw).orElseThrow();
+
+    assertThat(sanitizer.structuralProblems(graph))
+        .anySatisfy(problem -> assertThat(problem).contains("reporting"));
+  }
+
+  @Test
+  void reportsGraphsThatSplitIntoSeparateIslands() {
+    String raw =
+        """
+        {
+          "nodes": [
+            {"id": "client", "type": "mobile", "data": {"label": "Client"}},
+            {"id": "gateway", "type": "gateway", "data": {"label": "Gateway"}},
+            {"id": "worker", "type": "service", "data": {"label": "Worker"}},
+            {"id": "worker-db", "type": "database", "data": {"label": "Worker DB"}}
+          ],
+          "edges": [
+            {"source": "client", "target": "gateway", "label": "HTTPS"},
+            {"source": "worker", "target": "worker-db", "label": "persist"}
+          ]
+        }
+        """;
+
+    JsonNode graph = sanitizer.sanitizeGraph(raw).orElseThrow();
+
+    assertThat(sanitizer.structuralProblems(graph))
+        .anySatisfy(problem -> assertThat(problem).contains("2 disconnected groups"));
+  }
+
+  @Test
+  void acceptsAConnectedGraph() {
+    String raw =
+        """
+        {
+          "nodes": [
+            {"id": "client", "type": "mobile", "data": {"label": "Client"}},
+            {"id": "gateway", "type": "gateway", "data": {"label": "Gateway"}},
+            {"id": "orders", "type": "service", "data": {"label": "Order Service"}},
+            {"id": "orders-db", "type": "database", "data": {"label": "Order DB"}}
+          ],
+          "edges": [
+            {"source": "client", "target": "gateway", "label": "HTTPS"},
+            {"source": "gateway", "target": "orders", "label": "REST"},
+            {"source": "orders", "target": "orders-db", "label": "persist"}
+          ]
+        }
+        """;
+
+    JsonNode graph = sanitizer.sanitizeGraph(raw).orElseThrow();
+
+    assertThat(sanitizer.structuralProblems(graph)).isEmpty();
+  }
+
+  @Test
   void acceptsDeepseekThinkingWrapperAndNestedDiagramKey() {
     String raw =
         """

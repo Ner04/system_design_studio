@@ -116,9 +116,16 @@ public class AiGenerationService {
     for (int attempt = 0; attempt < ollamaProperties.retries(); attempt++) {
       try {
         String rawResponse = ollamaClient.generate(model, diagramPrompt(prompt), true);
-        return jsonSanitizer
-            .sanitizeGraph(rawResponse)
-            .orElseThrow(() -> new IllegalStateException("Ollama returned malformed graph JSON"));
+        JsonNode graph =
+            jsonSanitizer
+                .sanitizeGraph(rawResponse)
+                .orElseThrow(() -> new IllegalStateException("Ollama returned malformed graph JSON"));
+        List<String> problems = jsonSanitizer.structuralProblems(graph);
+        if (!problems.isEmpty()) {
+          throw new IllegalStateException(
+              "Ollama returned an unusable graph (%s)".formatted(String.join("; ", problems)));
+        }
+        return graph;
       } catch (RuntimeException exception) {
         lastFailure = exception;
         if (exception instanceof OllamaUnavailableException) {
@@ -184,8 +191,40 @@ public class AiGenerationService {
         - Never include SVG, Mermaid, HTML, or canvas instructions.
         - Use 6 to 10 nodes.
         - Every edge source and target must reference an existing node id.
-        - Prefer realistic backend architecture components.
-        - Use the AWS-specific types when the prompt asks for an AWS or cloud-provider design.
+        - Every node must appear in at least one edge. Never emit an isolated node.
+        - Use at least (number of nodes - 1) edges so the whole diagram is one connected flow
+          that can be traced from the client through to storage.
+        - Name services after the domain in the user prompt, not generic infrastructure.
+          A prompt about expense sharing should produce components such as "Expense Service",
+          "Group Service", "Settlement Service" - not just "Service A" or a bare cloud stack.
+        - Use the generic types (service, database, cache, queue, gateway, mobile) by default.
+          Only use the AWS-specific types when the user prompt explicitly names AWS, a specific
+          AWS service, or asks for a cloud-provider design.
+        - When the prompt does name an AWS service, set that node's "type" to the matching value:
+          Lambda -> lambda, DynamoDB -> dynamodb, S3 -> s3, RDS -> rds, SQS -> sqs, SNS -> sns,
+          EC2 -> ec2, ECS -> ecs, EKS -> eks, CloudFront -> cloudfront, API Gateway -> apiGateway,
+          OpenSearch -> opensearch, VPC -> vpc. Do not fall back to "service" or "database" there.
+
+        Example of the expected shape and connectivity for "design a food delivery app":
+        {
+          "nodes": [
+            {"id": "customer-app", "type": "mobile", "data": {"label": "Customer App", "description": "Browses restaurants and places orders"}},
+            {"id": "api-gateway", "type": "gateway", "data": {"label": "API Gateway", "description": "Authenticates and routes requests"}},
+            {"id": "order-service", "type": "service", "data": {"label": "Order Service", "description": "Owns order lifecycle and pricing"}},
+            {"id": "restaurant-service", "type": "service", "data": {"label": "Restaurant Service", "description": "Serves menus and availability"}},
+            {"id": "order-db", "type": "database", "data": {"label": "Order Store", "description": "Durable order and payment records"}},
+            {"id": "menu-cache", "type": "cache", "data": {"label": "Menu Cache", "description": "Caches hot restaurant menus"}},
+            {"id": "delivery-queue", "type": "queue", "data": {"label": "Dispatch Queue", "description": "Hands off orders to courier assignment"}}
+          ],
+          "edges": [
+            {"source": "customer-app", "target": "api-gateway", "label": "HTTPS"},
+            {"source": "api-gateway", "target": "order-service", "label": "place order"},
+            {"source": "api-gateway", "target": "restaurant-service", "label": "browse"},
+            {"source": "restaurant-service", "target": "menu-cache", "label": "hot menus"},
+            {"source": "order-service", "target": "order-db", "label": "persist"},
+            {"source": "order-service", "target": "delivery-queue", "label": "dispatch"}
+          ]
+        }
 
         User prompt: %s
         """

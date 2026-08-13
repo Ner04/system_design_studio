@@ -4,8 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +20,12 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class OllamaJsonSanitizer {
+
+  /**
+   * A smaller local model often emits nodes it never wires up. Below this count the result
+   * reads as a fragment rather than an architecture, so it is worth another attempt.
+   */
+  private static final int MINIMUM_USABLE_NODES = 4;
 
   /**
    * Mirrors ArchitectureNodeType in the frontend. A type the frontend cannot render
@@ -129,6 +140,77 @@ public class OllamaJsonSanitizer {
     } catch (Exception exception) {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Shape coercion in {@link #sanitizeGraph} cannot tell a sparse architecture from a broken one:
+   * it drops edges pointing at ids that do not exist, which quietly leaves nodes stranded. A graph
+   * of islands renders as scattered boxes with no flow to read, so the caller retries on these
+   * problems instead of showing them. Returns an empty list when the graph is usable.
+   */
+  public List<String> structuralProblems(JsonNode graph) {
+    List<String> problems = new ArrayList<>();
+    if (graph == null || !graph.has("nodes") || !graph.get("nodes").isArray()) {
+      return List.of("graph has no nodes array");
+    }
+
+    List<String> nodeIds = new ArrayList<>();
+    for (JsonNode node : graph.get("nodes")) {
+      textAt(node, "id").ifPresent(nodeIds::add);
+    }
+    if (nodeIds.size() < MINIMUM_USABLE_NODES) {
+      problems.add("only %d node(s), expected at least %d".formatted(nodeIds.size(), MINIMUM_USABLE_NODES));
+    }
+
+    Map<String, Set<String>> adjacency = new HashMap<>();
+    nodeIds.forEach(id -> adjacency.put(id, new LinkedHashSet<>()));
+    JsonNode edges = graph.get("edges");
+    if (edges != null && edges.isArray()) {
+      for (JsonNode edge : edges) {
+        Optional<String> source = textAt(edge, "source");
+        Optional<String> target = textAt(edge, "target");
+        if (source.isPresent()
+            && target.isPresent()
+            && adjacency.containsKey(source.get())
+            && adjacency.containsKey(target.get())) {
+          adjacency.get(source.get()).add(target.get());
+          adjacency.get(target.get()).add(source.get());
+        }
+      }
+    }
+
+    List<String> orphans =
+        nodeIds.stream().filter(id -> adjacency.get(id).isEmpty()).sorted().toList();
+    if (!orphans.isEmpty()) {
+      problems.add("unconnected node(s): " + String.join(", ", orphans));
+    }
+
+    int components = countComponents(nodeIds, adjacency);
+    if (components > 1) {
+      problems.add("graph splits into %d disconnected groups".formatted(components));
+    }
+    return problems;
+  }
+
+  private int countComponents(List<String> nodeIds, Map<String, Set<String>> adjacency) {
+    Set<String> visited = new HashSet<>();
+    int components = 0;
+    for (String nodeId : nodeIds) {
+      if (!visited.add(nodeId)) {
+        continue;
+      }
+      components++;
+      Deque<String> queue = new ArrayDeque<>();
+      queue.add(nodeId);
+      while (!queue.isEmpty()) {
+        for (String neighbour : adjacency.get(queue.poll())) {
+          if (visited.add(neighbour)) {
+            queue.add(neighbour);
+          }
+        }
+      }
+    }
+    return components;
   }
 
   private JsonNode graphNode(JsonNode root) {
