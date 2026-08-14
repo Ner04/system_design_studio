@@ -1,5 +1,6 @@
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/SystemDesignBackendApplication.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/AiGenerationService.java
+/Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/DesignDocumentComposer.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaClient.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaConfig.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaJsonSanitizer.java

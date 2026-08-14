@@ -63,7 +63,7 @@ export function AppShell() {
           {viewMode === "both" && (
             <div className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(240px,0.95fr)_6px_minmax(280px,1.05fr)] bg-ink-950 lg:grid-cols-[minmax(420px,0.95fr)_6px_minmax(460px,1.05fr)] lg:grid-rows-1">
               <div className="min-h-0">
-                <DocumentEditor />
+                <DocumentEditor allowSplit={false} />
               </div>
               <div
                 aria-hidden="true"

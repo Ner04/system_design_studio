@@ -169,6 +169,20 @@ export function InspectorPanel() {
               })}
             </div>
           </section>
+
+          <section className="border-t border-white/10 p-4">
+            <button
+              type="button"
+              onClick={() => eraseNode(architectureNode.id)}
+              className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-rose-400/25 bg-rose-500/10 text-xs font-semibold text-rose-200 transition hover:border-rose-400/50 hover:bg-rose-500/20"
+            >
+              <Trash2 size={14} />
+              Delete component
+            </button>
+            <p className="mt-2 text-center text-[11px] text-slate-500">
+              Or press Delete / Backspace while it is selected.
+            </p>
+          </section>
         </div>
       ) : annotationNode ? (
         <div className="flex-1 overflow-y-auto">

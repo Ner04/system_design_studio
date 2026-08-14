@@ -1,6 +1,7 @@
 import {
   BookOpenText,
   Code2,
+  Columns2,
   FileCode2,
   GitFork,
   Heading1,
@@ -10,6 +11,12 @@ import {
 } from "lucide-react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { useDocumentStore } from "../store/documentStore";
+
+const panelModes = [
+  { id: "write", label: "Write", icon: FileCode2 },
+  { id: "split", label: "Split", icon: Columns2 },
+  { id: "preview", label: "Preview", icon: PanelRight },
+] as const;
 
 const insertionSnippets = [
   {
@@ -34,13 +41,22 @@ const insertionSnippets = [
   },
 ] as const;
 
-export function DocumentEditor() {
+/**
+ * `allowSplit` is false when the canvas is already sharing the screen: splitting the
+ * document again would leave three columns competing for the same width.
+ */
+export function DocumentEditor({ allowSplit = true }: { allowSplit?: boolean }) {
   const title = useDocumentStore((state) => state.title);
   const markdown = useDocumentStore((state) => state.markdown);
-  const panelMode = useDocumentStore((state) => state.panelMode);
+  const storedPanelMode = useDocumentStore((state) => state.panelMode);
   const setTitle = useDocumentStore((state) => state.setTitle);
   const setMarkdown = useDocumentStore((state) => state.setMarkdown);
   const setPanelMode = useDocumentStore((state) => state.setPanelMode);
+
+  const panelMode = !allowSplit && storedPanelMode === "split" ? "preview" : storedPanelMode;
+  const visibleModes = allowSplit
+    ? panelModes
+    : panelModes.filter((mode) => mode.id !== "split");
 
   const appendSnippet = (snippet: string) => {
     setMarkdown(`${markdown}${snippet}`);
@@ -85,56 +101,54 @@ export function DocumentEditor() {
           </div>
 
           <div className="flex rounded-lg border border-white/10 bg-white/[0.035] p-1">
-            <button
-              type="button"
-              onClick={() => setPanelMode("write")}
-              className={`flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium transition ${
-                panelMode === "write"
-                  ? "bg-white text-ink-950"
-                  : "text-slate-400 hover:bg-white/10 hover:text-white"
-              }`}
-            >
-              <FileCode2 size={14} />
-              Write
-            </button>
-            <button
-              type="button"
-              onClick={() => setPanelMode("preview")}
-              className={`flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium transition ${
-                panelMode === "preview"
-                  ? "bg-white text-ink-950"
-                  : "text-slate-400 hover:bg-white/10 hover:text-white"
-              }`}
-            >
-              <PanelRight size={14} />
-              Preview
-            </button>
+            {visibleModes.map((mode) => {
+              const Icon = mode.icon;
+
+              return (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => setPanelMode(mode.id)}
+                  className={`flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium transition ${
+                    panelMode === mode.id
+                      ? "bg-white text-ink-950"
+                      : "text-slate-400 hover:bg-white/10 hover:text-white"
+                  }`}
+                >
+                  <Icon size={14} />
+                  {mode.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(360px,0.96fr)_minmax(320px,0.84fr)]">
-        <div
-          className={`min-h-0 border-r border-white/10 ${
-            panelMode === "preview" ? "hidden xl:block" : "block"
-          }`}
-        >
-          <textarea
-            value={markdown}
-            onChange={(event) => setMarkdown(event.target.value)}
-            aria-label="Markdown editor"
-            spellCheck={false}
-            className="h-full w-full resize-none bg-ink-950 px-8 py-7 font-mono text-[13px] leading-6 text-slate-200 outline-none placeholder:text-slate-600"
-          />
-        </div>
+      {/* The toggle is authoritative at every width: only "split" shows both panes. */}
+      <div
+        className={`grid min-h-0 flex-1 overflow-hidden ${
+          panelMode === "split"
+            ? "grid-cols-1 xl:grid-cols-[minmax(360px,0.96fr)_minmax(320px,0.84fr)]"
+            : "grid-cols-1"
+        }`}
+      >
+        {panelMode !== "preview" && (
+          <div className="min-h-0 border-r border-white/10">
+            <textarea
+              value={markdown}
+              onChange={(event) => setMarkdown(event.target.value)}
+              aria-label="Markdown editor"
+              spellCheck={false}
+              className="h-full w-full resize-none bg-ink-950 px-8 py-7 font-mono text-[13px] leading-6 text-slate-200 outline-none placeholder:text-slate-600"
+            />
+          </div>
+        )}
 
-        <div
-          className={`min-h-0 bg-ink-900/35 ${
-            panelMode === "write" ? "hidden xl:block" : "block"
-          }`}
-        >
-          <MarkdownPreview markdown={markdown} />
-        </div>
+        {panelMode !== "write" && (
+          <div className="min-h-0 bg-ink-900/35">
+            <MarkdownPreview markdown={markdown} />
+          </div>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center justify-between border-t border-white/10 bg-ink-900/70 px-5 py-2 text-xs text-slate-500">

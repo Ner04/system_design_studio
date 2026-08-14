@@ -1,4 +1,5 @@
 com/app/JsonTestUtils.class
 com/app/BackendApiIntegrationTest.class
+com/app/DesignDocumentComposerTest.class
 com/app/ai/OllamaClientTest.class
 com/app/OllamaJsonSanitizerTest.class

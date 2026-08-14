@@ -14,7 +14,7 @@ public class OllamaConfig {
   RestClient ollamaRestClient(OllamaProperties properties) {
     SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
     requestFactory.setConnectTimeout(3_000);
-    requestFactory.setReadTimeout(120_000);
+    requestFactory.setReadTimeout(properties.readTimeoutSeconds() * 1_000);
 
     return RestClient.builder()
         .requestFactory(requestFactory)

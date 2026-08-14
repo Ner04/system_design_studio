@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { seedTechnicalDocument } from "../data/seedDocument";
 
-type DocumentPanelMode = "write" | "preview";
+type DocumentPanelMode = "write" | "split" | "preview";
 
 type DocumentState = {
   title: string;

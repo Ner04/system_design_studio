@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
 
 @Service
 public class AiGenerationService {
@@ -18,16 +19,19 @@ public class AiGenerationService {
   private final OllamaClient ollamaClient;
   private final OllamaJsonSanitizer jsonSanitizer;
   private final OllamaProperties ollamaProperties;
+  private final DesignDocumentComposer documentComposer;
 
   public AiGenerationService(
       ObjectMapper objectMapper,
       OllamaClient ollamaClient,
       OllamaJsonSanitizer jsonSanitizer,
-      OllamaProperties ollamaProperties) {
+      OllamaProperties ollamaProperties,
+      DesignDocumentComposer documentComposer) {
     this.objectMapper = objectMapper;
     this.ollamaClient = ollamaClient;
     this.jsonSanitizer = jsonSanitizer;
     this.ollamaProperties = ollamaProperties;
+    this.documentComposer = documentComposer;
   }
 
   public AiGenerationResponse generateDiagram(AiGenerateDiagramRequest request) {
@@ -128,7 +132,7 @@ public class AiGenerationService {
         return graph;
       } catch (RuntimeException exception) {
         lastFailure = exception;
-        if (exception instanceof OllamaUnavailableException) {
+        if (isNotWorthRetrying(exception)) {
           break;
         }
       }
@@ -136,26 +140,22 @@ public class AiGenerationService {
     throw lastFailure == null ? new IllegalStateException("Ollama graph generation failed") : lastFailure;
   }
 
+  /**
+   * The composer already retries nothing and falls back per section, so a whole-document retry
+   * here would re-run every section - minutes of work - to fix at most one of them.
+   */
   private String generateOllamaDocument(String prompt, String model) {
-    RuntimeException lastFailure = null;
-    for (int attempt = 0; attempt < ollamaProperties.retries(); attempt++) {
-      try {
-        String markdown = ollamaClient.generate(model, documentPrompt(prompt), false).trim();
-        if (markdown.startsWith("```")) {
-          markdown = markdown.replaceFirst("(?s)^```(?:markdown)?\\s*", "").replaceFirst("(?s)\\s*```$", "");
-        }
-        if (!markdown.contains("## Overview")) {
-          throw new IllegalStateException("Ollama document missed required sections");
-        }
-        return markdown;
-      } catch (RuntimeException exception) {
-        lastFailure = exception;
-        if (exception instanceof OllamaUnavailableException) {
-          break;
-        }
-      }
-    }
-    throw lastFailure == null ? new IllegalStateException("Ollama document generation failed") : lastFailure;
+    return documentComposer.compose(titleFromPrompt(prompt), prompt, model);
+  }
+
+  /**
+   * Retrying is only worth the wait when a second roll of the dice could plausibly differ.
+   * A read timeout or a refused connection would just burn another full generation window
+   * before failing the same way, so those go straight to the deterministic fallback.
+   */
+  private boolean isNotWorthRetrying(RuntimeException exception) {
+    return exception instanceof OllamaUnavailableException
+        || exception instanceof ResourceAccessException;
   }
 
   private String diagramPrompt(String prompt) {
@@ -233,8 +233,8 @@ public class AiGenerationService {
 
   private String documentPrompt(String prompt) {
     return """
-        You write technical design documents for system design interview preparation.
-        Return Markdown only. Do not wrap the answer in code fences.
+        You write technical design documents that TEACH system design to a learner who has
+        never seen this system before. Return Markdown only. Do not wrap the answer in code fences.
 
         Include these sections exactly:
         # <System Name>
@@ -244,6 +244,8 @@ public class AiGenerationService {
         ### Non Functional Requirements
         ## Capacity Estimation
         ## Core Components
+        ## Request Walkthrough
+        ## The Hard Part
         ## APIs
         ## Database Design
         ## Scaling
@@ -252,7 +254,38 @@ public class AiGenerationService {
         ## Tradeoffs
         ## Interview Discussion Points
 
-        Keep the answer practical, concise, and backend-system focused.
+        How to write it, so a learner actually understands:
+        - Explain WHY, never just WHAT. For every component, say what it does and what would
+          break without it. "Redis caches seat availability" teaches nothing on its own;
+          "Redis caches seat availability so a search does not hit the booking database,
+          which is already saturated by writes" teaches the reason.
+        - Define every acronym and piece of jargon the first time it appears.
+        - Capacity Estimation must follow this recipe exactly: one simple operation per line,
+          86400 seconds per day, 30 days per month. Worked example to copy the SHAPE of:
+            - Assume 10,000,000 daily active users.
+            - Assume 5 searches per user per day -> 10,000,000 x 5 = 50,000,000 searches/day.
+            - Average = 50,000,000 / 86400 = about 580 searches/second.
+            - Assume peak is 10x average = about 5,800 searches/second.
+            - Assume 500,000 bookings/day at 1 KB each = 500 MB/day of new booking data.
+          Replace those numbers with ones that fit this system, keep every line to a single
+          multiplication or division, and make sure each line follows from the line above.
+          Never divide a per-day quantity by a per-second quantity. Never invent a statistic
+          about a real organisation - write "assume" and reason from there.
+          State each assumption exactly once. Never restate the same assumption with a
+          different number later in the section.
+          Write all arithmetic as plain text, exactly like the example above. Never use LaTeX,
+          \\( \\), \\frac, or dollar-sign math - it does not render and the reader sees raw markup.
+        - In Request Walkthrough, trace ONE core user action end to end as numbered steps,
+          naming the component handling each step and what it returns.
+        - In The Hard Part, name the single hardest technical problem this specific system
+          faces and explain how you would solve it. For a ticket booking system that is
+          concurrent seat inventory and double-booking under a booking rush; for a chat
+          system it is ordering and delivery guarantees. Be concrete about the mechanism.
+        - In Tradeoffs, give the alternative you rejected and why you rejected it.
+        - Prefer specific technologies and numbers over vague phrases like
+          "highly scalable" or "robust architecture".
+        - Do not assert facts about a real company that you are unsure of, including what
+          its name stands for. Describe the system and its architecture instead.
 
         User prompt: %s
         """

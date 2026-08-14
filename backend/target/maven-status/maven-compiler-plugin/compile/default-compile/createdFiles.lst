@@ -17,12 +17,14 @@ com/app/dto/RealtimeDiagramEvent.class
 com/app/dto/DiagramSaveRequest.class
 com/app/repository/VersionHistoryRepository.class
 com/app/controller/DocumentController.class
+com/app/ai/DesignDocumentComposer$ModelSection.class
 com/app/dto/AiGenerationResponse.class
 com/app/config/WebConfig.class
 com/app/controller/DiagramController.class
 com/app/dto/DocumentSaveRequest.class
 com/app/ai/OllamaUnavailableException.class
 com/app/config/WebSocketConfig.class
+com/app/ai/DesignDocumentComposer.class
 com/app/repository/DocumentRepository.class
 com/app/ai/OllamaConfig.class
 com/app/model/VersionHistoryEntity.class
