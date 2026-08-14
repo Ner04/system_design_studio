@@ -1,6 +1,9 @@
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/SystemDesignBackendApplication.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/AiGenerationService.java
+/Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/CapacityEstimator.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/DesignDocumentComposer.java
+/Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/DocumentMode.java
+/Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/GenerationProgressTracker.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaClient.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaConfig.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/ai/OllamaJsonSanitizer.java
@@ -21,6 +24,7 @@
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/dto/DiagramSaveRequest.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/dto/DocumentResponse.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/dto/DocumentSaveRequest.java
+/Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/dto/GenerationProgressResponse.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/dto/RealtimeDiagramEvent.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/model/DiagramEntity.java
 /Users/shubhamnayak/Desktop/eraser-clone /backend/src/main/java/com/app/model/DocumentEntity.java

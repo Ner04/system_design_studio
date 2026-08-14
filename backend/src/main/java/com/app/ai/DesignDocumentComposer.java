@@ -8,57 +8,106 @@ import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
- * Builds a full technical design document one section at a time.
+ * Builds a technical design document one section at a time.
  *
- * <p>A small local model spreads itself thin when asked for a long structured document in a
- * single pass: headings go missing, tables come back malformed, and later sections degrade into
+ * <p>A small local model spreads itself thin when asked for a long structured document in a single
+ * pass: headings go missing, tables come back malformed, and later sections degrade into
  * repetition. Generating each section from its own narrow prompt keeps every request inside the
  * range these models handle well, and the parts that must be exact - the numbering, the table
- * headers, the release checklist - are written here rather than hoped for. A section that fails
- * or times out falls back to its own default, so one bad response never costs the whole document.
+ * headers, the arithmetic, the release checklist - are computed here rather than hoped for. A
+ * section that fails or times out falls back to its own default, so one bad response never costs
+ * the whole document.
  */
 @Component
 public class DesignDocumentComposer {
 
   private final OllamaClient ollamaClient;
   private final GenerationProgressTracker progressTracker;
+  private final CapacityEstimator capacityEstimator;
 
   public DesignDocumentComposer(
-      OllamaClient ollamaClient, GenerationProgressTracker progressTracker) {
+      OllamaClient ollamaClient,
+      GenerationProgressTracker progressTracker,
+      CapacityEstimator capacityEstimator) {
     this.ollamaClient = ollamaClient;
     this.progressTracker = progressTracker;
+    this.capacityEstimator = capacityEstimator;
   }
 
-  /** A section the model writes. The heading and numbering around it are fixed here. */
-  private record ModelSection(String heading, String instruction, String fallback) {}
+  private enum Kind {
+    /** Written by the model from the section's own instruction. */
+    MODEL,
+    /** Assumptions come from the model, every derived number is computed in Java. */
+    CAPACITY,
+    /** Written entirely here; a checklist needs no model. */
+    FIXED
+  }
+
+  /**
+   * Section numbers are assigned at assembly time rather than baked into the title, because the
+   * section list depends on the mode.
+   */
+  private record DocSection(String title, Kind kind, String instruction, String fallback) {}
 
   public String compose(String systemName, String userPrompt, String model) {
-    return compose(systemName, userPrompt, model, null);
+    return compose(systemName, userPrompt, model, null, DocumentMode.INTERVIEW);
   }
 
-  public String compose(String systemName, String userPrompt, String model, String requestId) {
-    List<ModelSection> sections = modelSections(systemName);
-    // The three sections written here are effectively instant, so the reported total counts
-    // only the model calls - the part the wait is actually made of.
-    int totalSteps = sections.size();
-    progressTracker.start(requestId, totalSteps, stepName(sections.getFirst()));
-    StringBuilder document = new StringBuilder("# Technical Design Document: ")
-        .append(systemName)
-        .append("\n");
+  public String compose(
+      String systemName, String userPrompt, String model, String requestId, DocumentMode mode) {
+    List<DocSection> sections = sectionsFor(mode);
+    // Only sections that call the model contribute to the wait, so only those are counted.
+    int totalSteps = (int) sections.stream().filter(section -> section.kind() != Kind.FIXED).count();
+    progressTracker.start(requestId, totalSteps, sections.getFirst().title());
+    // A failed generation must not leave the client polling a step that will never advance.
+    try {
+      return assemble(systemName, userPrompt, model, requestId, sections, totalSteps);
+    } finally {
+      progressTracker.finish(requestId);
+    }
+  }
+
+  private String assemble(
+      String systemName,
+      String userPrompt,
+      String model,
+      String requestId,
+      List<DocSection> sections,
+      int totalSteps) {
+    StringBuilder document =
+        new StringBuilder("# Technical Design Document: ").append(systemName).append("\n");
 
     boolean anySectionSucceeded = false;
+    int completedSteps = 0;
     // Sections are generated independently, so without this the data model and API sections
     // invent service names that contradict the architecture section above them.
     String establishedComponents = "";
-    for (ModelSection section : sections) {
-      document.append("\n").append(section.heading()).append("\n\n");
-      String body = generateSection(systemName, userPrompt, model, section, establishedComponents);
-      anySectionSucceeded |= !body.equals(section.fallback());
+
+    for (int index = 0; index < sections.size(); index++) {
+      DocSection section = sections.get(index);
+      document.append("\n## ").append(index + 1).append(". ").append(section.title()).append("\n\n");
+
+      String body;
+      if (section.kind() == Kind.FIXED) {
+        body = section.fallback();
+      } else {
+        progressTracker.update(requestId, completedSteps, totalSteps, section.title());
+        completedSteps++;
+        body = generateSection(systemName, userPrompt, model, section, establishedComponents);
+        // Only prose sections count as evidence the model is alive. The capacity section
+        // renders a usable table from default assumptions even when every call failed, so
+        // letting it vote here would mask a completely dead Ollama.
+        if (section.kind() == Kind.MODEL) {
+          anySectionSucceeded |= !body.equals(section.fallback());
+        }
+      }
+
       document.append(body.strip()).append("\n\n---\n");
-      if (establishedComponents.isEmpty()) {
+      if (establishedComponents.isEmpty() && section.kind() == Kind.MODEL) {
         establishedComponents = componentContext(body);
       }
     }
+    progressTracker.update(requestId, totalSteps, totalSteps, "Assembling document");
 
     // Ollama being unreachable would otherwise yield a document of nothing but fallbacks,
     // which reads as a real answer while containing no reasoning about the request at all.
@@ -66,9 +115,9 @@ public class DesignDocumentComposer {
       throw new IllegalStateException("Every document section fell back; Ollama produced nothing");
     }
 
-    appendTestingStrategy(document, systemName);
-    appendRolloutPlan(document, systemName);
-    appendAppendix(document);
+    if (document.indexOf("### Dependencies") >= 0) {
+      replaceDependencyPlaceholder(document);
+    }
     return document.toString();
   }
 
@@ -76,9 +125,12 @@ public class DesignDocumentComposer {
       String systemName,
       String userPrompt,
       String model,
-      ModelSection section,
+      DocSection section,
       String establishedComponents) {
     try {
+      if (section.kind() == Kind.CAPACITY) {
+        return capacityEstimator.estimateFor(systemName, userPrompt, model);
+      }
       String prompt = sectionPrompt(systemName, userPrompt, section, establishedComponents);
       String cleaned = stripToBody(ollamaClient.generate(model, prompt, false));
       return cleaned.isBlank() ? section.fallback() : cleaned;
@@ -104,16 +156,16 @@ public class DesignDocumentComposer {
   }
 
   private String sectionPrompt(
-      String systemName, String userPrompt, ModelSection section, String establishedComponents) {
+      String systemName, String userPrompt, DocSection section, String establishedComponents) {
     return """
-        You are writing ONE section of a technical design document for "%s".
+        You are writing ONE section of a system design document for "%s".
         The original request was: %s
 
         Write only the section described below. Do not write any other section.
         Do not repeat the section heading - it is already printed above your text.
         Do not add a preamble such as "Here is" or "Sure". Output the content only.
         Do not wrap your answer in code fences unless the content is source code or a schema.
-        Use Markdown. Keep every statement specific to this system rather than generic advice.
+        Use Markdown, and use "### " for any subheading you need.
 
         Write about the system itself. Never refer to "this section", "this document", or
         "this design" - the reader wants the architecture, not commentary about the writing.
@@ -121,9 +173,8 @@ public class DesignDocumentComposer {
         Name concrete technologies. Write "PostgreSQL", "Redis", or "Apache Kafka", never
         placeholder words like "Database", "Cache", or "Message Queue" on their own.
 
-        The full document already covers, in later sections: the data model and database
-        schema, the REST and realtime API, security and rate limiting, the testing strategy,
-        the rollout plan, and monitoring. Never describe any of those as out of scope.%s
+        The architecture here is a horizontally scaled, distributed, multi-service system.
+        Never claim it runs on a single machine.%s
 
         %s
         """
@@ -166,132 +217,119 @@ public class DesignDocumentComposer {
     return String.join("\n", kept).strip();
   }
 
-  private List<ModelSection> modelSections(String systemName) {
+  private List<DocSection> sectionsFor(DocumentMode mode) {
+    List<DocSection> sections = new ArrayList<>(interviewSections());
+    if (mode == DocumentMode.DELIVERY) {
+      sections.addAll(deliverySections());
+    }
+    return sections;
+  }
+
+  private List<DocSection> interviewSections() {
     return List.of(
-        new ModelSection(
-            "## 1. Overview",
+        new DocSection(
+            "Problem and Requirements",
+            Kind.MODEL,
             """
-            Write exactly these two subsections, keeping the headings verbatim:
+            Write exactly these three subsections, keeping the headings verbatim:
 
-            ### 1.1 Background
-            Two or three sentences on what this system does and why it is technically
-            demanding. Name the specific pressure - traffic shape, consistency need,
-            latency budget - rather than saying it is "complex" or "large scale".
+            ### Functional Requirements
+            5 or 6 bullets. Each is one capability, stated as something a user can do.
 
-            ### 1.2 Scope
-            A bulleted list of 4 to 6 areas this design covers.
+            ### Non-Functional Requirements
+            4 or 5 bullets, each carrying a number: a latency target with a percentile, an
+            availability target, a consistency requirement, a durability requirement.
+
+            ### Out of Scope
+            3 or 4 bullets naming what you are deliberately not designing. Scoping the problem
+            on purpose is the first thing an interviewer looks for.
             """,
             """
-            ### 1.1 Background
+            ### Functional Requirements
 
-            This document describes the architecture for %s, covering the services, storage,
-            and data flow needed to run it reliably.
+            - Users can create, read, and manage the core records of the system.
+            - Users can search and filter those records.
+            - The system notifies users when relevant state changes.
+            - Administrators can audit activity.
 
-            ### 1.2 Scope
+            ### Non-Functional Requirements
 
-            - Core request handling and service boundaries
-            - Data storage and access patterns
-            - Asynchronous and background processing
-            - Scaling and failure behaviour
-            """
-                .formatted(systemName)),
-        new ModelSection(
-            "## 2. Goals and Non-Goals",
-            """
-            Write exactly these two subsections, keeping the headings verbatim:
+            - Read latency under 300 ms at p99.
+            - Availability of 99.9% for the primary request path.
+            - Read-your-writes consistency for a user's own data.
+            - No acknowledged write is ever lost.
 
-            ### 2.1 Goals
-            Exactly 5 bullets. Each starts with a bolded short name, then a colon, then a
-            measurable target with a real number and a percentile or unit. Name goals drawn
-            from THIS system's own workload rather than reusing any example wording.
-            Give real numbers, never "fast", "robust", or "scalable".
+            ### Out of Scope
 
-            ### 2.2 Non-Goals
-            4 to 6 bullets naming things this design deliberately does NOT cover, such as
-            adjacent systems owned by other teams. Be concrete about the boundary.
-            """,
-            """
-            ### 2.1 Goals
-
-            - **Latency**: serve core read requests in under 300ms at p99
-            - **Availability**: 99.9% uptime for the primary request path
-            - **Scalability**: scale horizontally with stateless services
-            - **Durability**: no acknowledged write is lost
-
-            ### 2.2 Non-Goals
-
-            - Billing and payment processing
-            - User onboarding and identity verification
-            - Internal analytics and reporting interfaces
-            - Customer support tooling
+            - Billing and payment processing.
+            - Identity verification and onboarding.
+            - Internal analytics interfaces.
             """),
-        new ModelSection(
-            "## 3. Architecture",
+        new DocSection("Capacity Estimation", Kind.CAPACITY, "", capacityFallback()),
+        new DocSection(
+            "High-Level Architecture",
+            Kind.MODEL,
             """
-            Write exactly these two subsections, keeping the headings verbatim:
-
-            ### 3.1 High-Level Architecture
             One sentence naming the architectural style, then a Markdown table with exactly
             these columns: Layer | Components | Responsibility. Give 5 or 6 rows covering
-            clients, gateway/edge, core services, messaging, and storage. Name real
-            technologies in the Components column.
+            clients, edge, core services, messaging, and storage, naming real technologies.
 
-            ### 3.2 Component Details
-            For each core service, a "#### " heading with the service name, then 3 or 4
-            bullets covering what it owns, what it talks to, and how it scales.
+            Then a "### Component Details" subheading, and under it a "#### " heading per core
+            service with 3 bullets each: what it owns, what it talks to, and how it scales.
             """,
             """
-            ### 3.1 High-Level Architecture
-
             The system uses an event-driven service architecture.
 
             | Layer | Components | Responsibility |
             | --- | --- | --- |
             | Clients | Web and mobile apps | User-facing interaction |
-            | Edge | Load balancer, API gateway | Routing, TLS, rate limiting |
+            | Edge | NGINX, API gateway | Routing, TLS, rate limiting |
             | Core Services | Application services | Business logic |
-            | Messaging | Event queue | Decoupling and async work |
-            | Storage | Primary database, cache | Durable state and hot reads |
+            | Messaging | Apache Kafka | Decoupling and async work |
+            | Storage | PostgreSQL, Redis | Durable state and hot reads |
 
-            ### 3.2 Component Details
+            ### Component Details
 
             #### API Gateway
-            - Terminates TLS and authenticates every request
-            - Applies per-client rate limits before traffic reaches core services
+            - Terminates TLS and authenticates every request.
+            - Applies per-client rate limits before traffic reaches core services.
+            - Scales horizontally behind a load balancer.
 
             #### Core Service
-            - Owns the primary domain workflows and validation
-            - Reads and writes the primary database, caching hot lookups
+            - Owns the primary domain workflows and validation.
+            - Reads and writes PostgreSQL, caching hot lookups in Redis.
+            - Stateless, so capacity is added by adding replicas.
             """),
-        new ModelSection(
-            "## 4. Data Model",
+        new DocSection(
+            "Data Model and Schema",
+            Kind.MODEL,
             """
             Write exactly these three subsections, keeping the headings verbatim:
 
-            ### 4.1 Core Entity
-            A json code block showing the main record this system stores, with realistic
-            field names and example values. Include an enum-style status field.
+            ### Core Entity
+            A json code block for the main stored record, with realistic field names and an
+            enum-style status field.
 
-            ### 4.2 Event Payload
-            A json code block for the main event this system publishes or ingests.
+            ### Event Payload
+            A json code block for the main event this system publishes.
 
-            ### 4.3 Schema
+            ### Schema
             A sql code block with CREATE TABLE statements for the main tables, including
-            primary keys and the indexes the access patterns need.
+            primary keys and the indexes the access patterns actually need. Add a one-line
+            comment above each index saying which query it serves.
             """,
             """
-            ### 4.1 Core Entity
+            ### Core Entity
 
             ```json
             {
               "id": "uuid",
               "status": "PENDING | ACTIVE | COMPLETED",
-              "created_at": "ISO-8601",
-              "updated_at": "ISO-8601"
+              "created_at": "ISO-8601"
             }
             ```
 
-            ### 4.2 Event Payload
+            ### Event Payload
 
             ```json
             {
@@ -302,118 +340,263 @@ public class DesignDocumentComposer {
             }
             ```
 
-            ### 4.3 Schema
+            ### Schema
 
             ```sql
             CREATE TABLE entities (
                 id UUID PRIMARY KEY,
                 status TEXT NOT NULL,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL
             );
 
+            -- Serves the "recent records by status" listing query.
             CREATE INDEX idx_entities_status_created ON entities (status, created_at DESC);
             ```
             """),
-        new ModelSection(
-            "## 5. API Design",
+        new DocSection(
+            "API Design",
+            Kind.MODEL,
             """
-            Write exactly these two subsections, keeping the headings verbatim:
-
-            ### 5.1 REST Endpoints
-            Exactly three endpoints: one that creates something, one that fetches a single
-            record by id, and one supporting operation. Name each "#### " heading after what
-            the endpoint does, for example "#### Create Booking" or "#### Get Booking Status".
-            Never prefix a heading with the words "Write" or "Read".
-
-            Under each heading put ONE fenced code block laid out exactly like this, with no
-            bullet lists and no bold labels around it:
+            Exactly four endpoint signatures in a single code block, one per line, in the form
+            METHOD /path -> response. Keep it terse, the way it would be written on a
+            whiteboard. For example:
 
             ```
-            POST /api/v1/bookings
-            Authorization: Bearer <token>
-
-            Request:
-            { "field": "value" }
-
-            Response: 201 Created
-            { "id": "uuid", "status": "PENDING" }
+            POST /api/v1/rides                 -> 201 { ride_id, status }
+            GET  /api/v1/rides/{id}            -> 200 { ride_id, status, driver }
+            POST /api/v1/drivers/location      -> 202 accepted
+            WS   /api/v1/rides/{id}/updates    -> stream of { status, location }
             ```
 
-            Copy the LAYOUT of that block only. The paths, headings, and field names must use
-            this system's own vocabulary, never the words "booking" or "field" from the example.
+            Then a "### Notes" subheading with 3 bullets covering how the write endpoint stays
+            idempotent, how the list endpoint paginates, and what is versioned.
 
-            ### 5.2 Realtime Events
-            A Markdown table with columns Event | Payload | Description, listing 4 events
-            the server pushes to clients. Skip this subsection's table and write one
-            sentence instead if this system genuinely has no realtime component.
+            Use this system's own vocabulary in the paths, never the words from the example.
             """,
             """
-            ### 5.1 REST Endpoints
-
-            #### Create Resource
-
             ```
-            POST /api/v1/resources
-            Authorization: Bearer <token>
-
-            Request:
-            { "name": "string" }
-
-            Response: 201 Created
-            { "id": "uuid", "status": "PENDING" }
+            POST /api/v1/resources        -> 201 { id, status }
+            GET  /api/v1/resources/{id}   -> 200 { id, status }
+            GET  /api/v1/resources        -> 200 { items[], next_cursor }
+            DELETE /api/v1/resources/{id} -> 204
             ```
 
-            #### Get Resource
+            ### Notes
 
-            ```
-            GET /api/v1/resources/{id}
-            Authorization: Bearer <token>
-
-            Response: 200 OK
-            { "id": "uuid", "status": "ACTIVE" }
-            ```
-
-            ### 5.2 Realtime Events
-
-            | Event | Payload | Description |
-            | --- | --- | --- |
-            | `resource:created` | `{ id }` | A new resource was created |
-            | `resource:updated` | `{ id, status }` | Resource state changed |
+            - Writes carry a client-supplied idempotency key so retries cannot duplicate.
+            - Listing uses cursor pagination, since offset pagination drifts under writes.
+            - The version lives in the path so breaking changes can run side by side.
             """),
-        new ModelSection(
-            "## 6. Security Considerations",
+        new DocSection(
+            "Deep Dive: The Hard Part",
+            Kind.MODEL,
+            """
+            Name the single hardest technical problem THIS system faces, and solve it. Write
+            exactly these three subsections, keeping the headings verbatim:
+
+            ### The Problem
+            2 or 3 sentences on the specific mechanism that breaks - the hot partition, the
+            race between two writers, the fanout amplification, the ordering guarantee that
+            cannot hold. Not "it must scale".
+
+            ### The Approach
+            The design that solves it, step by step, naming the actual technique: consistent
+            hashing, optimistic locking with a version column, a lease-based distributed lock,
+            a write-ahead log, quorum reads, a sharded counter, geohashing.
+
+            ### Why Not The Simpler Option
+            The obvious simpler approach an interviewer will suggest, and the specific reason
+            it fails here.
+
+            An interviewer spends more time on this than on anything else in the document.
+            Depth matters more here than breadth anywhere else.
+            """,
+            """
+            ### The Problem
+
+            The system's busiest path concentrates on a small number of records, so a single
+            partition receives a disproportionate share of writes while the rest sit idle.
+
+            ### The Approach
+
+            Shard on a composite key rather than the natural id, so a hot record spreads across
+            several partitions, and reconcile the parts on read. Where two writers can touch the
+            same record, use optimistic locking with a version column and retry on conflict.
+
+            ### Why Not The Simpler Option
+
+            A single primary with a read replica is simpler and survives moderate load, but the
+            hot partition is a write problem and read replicas do not absorb writes.
+            """),
+        new DocSection(
+            "Tradeoffs",
+            Kind.MODEL,
+            """
+            Pick the THREE tradeoffs from this list that this system genuinely forces a
+            decision on, and ignore the rest:
+
+            - Vertical vs Horizontal Scaling
+            - Concurrency vs Parallelism
+            - Long Polling vs WebSockets
+            - Batch vs Stream Processing
+            - Stateful vs Stateless Design
+            - Strong vs Eventual Consistency
+            - Read-Through vs Write-Through Cache
+            - Push vs Pull Architecture
+            - REST vs RPC
+            - Synchronous vs Asynchronous Communication
+            - Latency vs Throughput
+
+            For each, write a "#### " heading using the axis name exactly as written above,
+            then these three bolded lines:
+
+            - **Chosen**: the side you pick, in one sentence.
+            - **Why**: two sentences tying the choice to this system's actual workload.
+            - **Cost**: what you give up, and the situation where that would hurt.
+
+            Pick axes from different parts of the stack rather than three variations of the
+            same decision. A tradeoff with no real cost is not a tradeoff - name the cost.
+
+            If you pick "Vertical vs Horizontal Scaling", horizontal is the choice and the cost
+            is the distributed-systems complexity it brings. Judge each axis against what this
+            system's users actually do: a system where people compete for limited inventory,
+            see live updates, or expect immediate confirmation is realtime, and calling it a
+            batch workload is wrong.
+            """,
+            """
+            #### Strong vs Eventual Consistency
+
+            - **Chosen**: Strong consistency on the primary write path, eventual for derived views.
+            - **Why**: Users must never see their own write disappear, so the record of truth is
+              read-your-writes consistent. Derived views tolerate lag because nothing irreversible
+              depends on them.
+            - **Cost**: Cross-region writes pay a coordination penalty, painful if the system later
+              needs multi-region active-active writes.
+
+            #### Stateful vs Stateless Design
+
+            - **Chosen**: Stateless services, with all state in the datastore and cache.
+            - **Why**: Any instance can serve any request, so scaling out is just adding replicas.
+              Deploys and instance loss stop being correctness problems.
+            - **Cost**: Every request re-reads state an in-process cache could have held, raising
+              datastore load and putting the cache on the critical path.
+
+            #### Synchronous vs Asynchronous Communication
+
+            - **Chosen**: Synchronous on the user-facing path, asynchronous events downstream.
+            - **Why**: The user waits on the core action, so it stays a direct call. Notifications
+              and analytics do not need to block the response.
+            - **Cost**: Async paths are eventually consistent and need idempotent consumers,
+              retries, and a dead letter queue to stay debuggable.
+            """),
+        new DocSection(
+            "Bottlenecks and Failure Modes",
+            Kind.MODEL,
+            """
+            A Markdown table with exactly these columns: Bottleneck | Breaks when | Mitigation.
+            Give 5 rows, each naming a specific component from the architecture above.
+
+            Then a "### Failure Modes" subheading with 3 bullets, each in the form
+            "If X is unavailable: what the user sees, and how the system degrades". Prefer
+            honest degradation over claiming nothing breaks.
+            """,
+            """
+            | Bottleneck | Breaks when | Mitigation |
+            | --- | --- | --- |
+            | Primary database writes | Peak write load exceeds a single primary | Shard by the dominant access key |
+            | Cache stampede | A hot key expires under load | Request coalescing and staggered TTLs |
+            | Queue consumer lag | Producers outpace consumers | Scale consumers, partition by key |
+            | Fanout amplification | One write notifies very many readers | Fan out asynchronously, batch delivery |
+            | Connection limits | Realtime clients exceed gateway capacity | Horizontal gateways, connection draining |
+
+            ### Failure Modes
+
+            - If the cache is unavailable: latency rises and the database takes full read load;
+              serve stale entries where correctness allows.
+            - If the message broker is unavailable: writes still succeed, downstream effects are
+              delayed and replayed once the broker recovers.
+            - If the primary database is unavailable: writes fail fast with a retryable error
+              while reads continue from replicas.
+            """),
+        new DocSection(
+            "Interview Discussion Points",
+            Kind.MODEL,
+            """
+            Write exactly 8 questions an interviewer would ask about THIS design, easiest
+            first and hardest last.
+
+            Use NO headings and NO paragraphs in this section. Every line is part of a
+            question. Each question is exactly two lines, in this format:
+
+            - **How do you stop two users booking the same seat?**
+              *Optimistic locking on a version column, so the second write fails and retries.*
+
+            - **What happens when the cache is unavailable?**
+              *Reads fall through to the database, with request coalescing to avoid a stampede.*
+
+            Write 8 in exactly that shape. Copy the LAYOUT of those two examples but never
+            their wording - both are about a different system, and reusing either as one of
+            your 8 wastes a question. Ask about decisions visible in this document: its storage
+            choice, its sharding key, its consistency model, its hot path. Never generic system
+            design trivia. The question always ends in a question mark, and the italic line
+            below it always names a specific mechanism.
+            """,
+            """
+            - **What is the source of truth for this system?**
+              *The primary relational store; caches and derived views can always be rebuilt from it.*
+            - **Which workflows must be synchronous?**
+              *Only the ones the user waits on; everything else moves to the queue.*
+            - **How would you shard the data?**
+              *By the dominant access key, so the common query hits a single partition.*
+            - **What happens when the cache is cold?**
+              *Requests fall through to the database, so coalescing prevents a stampede.*
+            - **How do you prevent duplicate writes on retry?**
+              *A client-supplied idempotency key, stored and checked before the write commits.*
+            - **Where does this design break first under 10x load?**
+              *The write path on the hottest partition, before anything else saturates.*
+            - **How would you migrate the schema without downtime?**
+              *Expand, backfill, switch reads, then contract, keeping both shapes valid meanwhile.*
+            - **What would you change if consistency could be relaxed?**
+              *Move the write path behind the queue and serve reads from a replica.*
+            """));
+  }
+
+  private List<DocSection> deliverySections() {
+    return List.of(
+        new DocSection(
+            "Security Considerations",
+            Kind.MODEL,
             """
             Write exactly these four subsections, keeping the headings verbatim:
 
-            ### 6.1 Authentication and Authorization
-            3 or 4 bullets naming the mechanisms and the roles in this system.
+            ### Authentication and Authorization
+            3 bullets naming the mechanisms and the roles in this system.
 
-            ### 6.2 Data Protection
-            3 or 4 bullets on transport security, encryption at rest, and handling of any
-            personal data this specific system holds.
+            ### Data Protection
+            3 bullets on transport security, encryption at rest, and the personal data this
+            specific system holds.
 
-            ### 6.3 Rate Limiting
-            A Markdown table with columns Endpoint Type | Limit, giving 3 or 4 concrete
-            limits for this system's actual endpoints.
+            ### Rate Limiting
+            A Markdown table with columns Endpoint Type | Limit, giving 3 concrete limits for
+            this system's actual endpoints.
 
-            ### 6.4 Threat Mitigation
-            3 or 4 bullets on abuse specific to this domain and how the design counters it.
+            ### Threat Mitigation
+            3 bullets on abuse specific to this domain and how the design counters it.
             """,
             """
-            ### 6.1 Authentication and Authorization
+            ### Authentication and Authorization
 
-            - JWT bearer tokens on every authenticated request
-            - Role-based access control separating regular and administrative users
-            - Short token lifetimes with refresh tokens
+            - JWT bearer tokens on every authenticated request.
+            - Role-based access control separating regular and administrative users.
+            - Short token lifetimes with refresh tokens.
 
-            ### 6.2 Data Protection
+            ### Data Protection
 
-            - TLS for all client and service-to-service traffic
-            - Encryption at rest for the primary database and backups
-            - Personal data minimised and access audited
+            - TLS for all client and service-to-service traffic.
+            - Encryption at rest for the primary database and backups.
+            - Personal data minimised and access audited.
 
-            ### 6.3 Rate Limiting
+            ### Rate Limiting
 
             | Endpoint Type | Limit |
             | --- | --- |
@@ -421,33 +604,42 @@ public class DesignDocumentComposer {
             | Read endpoints | 100 req/min per user |
             | Authentication | 5 attempts/min per IP |
 
-            ### 6.4 Threat Mitigation
+            ### Threat Mitigation
 
-            - Input validation and schema enforcement on every public endpoint
-            - Rate limits and anomaly detection on authentication paths
-            - Audit logging for administrative actions
-            """));
+            - Input validation and schema enforcement on every public endpoint.
+            - Rate limits and anomaly detection on authentication paths.
+            - Audit logging for administrative actions.
+            """),
+        new DocSection("Testing Strategy", Kind.FIXED, "", testingStrategy()),
+        new DocSection("Rollout Plan", Kind.FIXED, "", rolloutPlan()),
+        new DocSection("Appendix", Kind.FIXED, "", appendix()));
   }
 
-  private void appendTestingStrategy(StringBuilder document, String systemName) {
-    document.append("""
+  private String capacityFallback() {
+    return """
+        Ollama was unavailable, so no scale assumptions could be gathered for this system.
+        Work the estimate by hand: daily active users x actions per user per day gives actions
+        per day; divide by 86,400 for average throughput; multiply by the peak factor for the
+        figure that actually sizes the system.
+        """;
+  }
 
-        ## 7. Testing Strategy
-
-        ### 7.1 Unit Testing
+  private String testingStrategy() {
+    return """
+        ### Unit Testing
 
         - Service logic covered with dependencies mocked
         - Target: 80% line coverage on core services
         - Frameworks: JUnit 5 and Mockito
 
-        ### 7.2 Integration Testing
+        ### Integration Testing
 
         - Database read and write paths against a real engine, not an in-memory stand-in
         - Message producer and consumer contracts
         - Cache invalidation behaviour under concurrent writes
         - Authentication and authorization on every public endpoint
 
-        ### 7.3 Load Testing
+        ### Load Testing
 
         | Scenario | Target |
         | --- | --- |
@@ -456,65 +648,55 @@ public class DesignDocumentComposer {
         | Concurrent connections | 100k |
         | Error rate under peak load | < 0.1% |
 
-        ### 7.4 Chaos Engineering
+        ### Chaos Engineering
 
         - Primary database failover during sustained write load
         - Cache cluster node loss and cold-start behaviour
         - Network partition between core services
         - Message broker unavailability and consumer backlog recovery
-
-        ---
-        """);
+        """;
   }
 
-  private void appendRolloutPlan(StringBuilder document, String systemName) {
-    document.append("""
-
-        ## 8. Rollout Plan
-
-        ### 8.1 Phase 1: Infrastructure (Week 1-2)
+  private String rolloutPlan() {
+    return """
+        ### Phase 1: Infrastructure (Week 1-2)
 
         - [ ] Provision database cluster with replication and automated backups
         - [ ] Deploy cache cluster
         - [ ] Stand up the message broker and create topics with retention policies
         - [ ] Configure load balancers, TLS certificates, and DNS
 
-        ### 8.2 Phase 2: Core Services (Week 3-4)
+        ### Phase 2: Core Services (Week 3-4)
 
         - [ ] Deploy core services to staging
         - [ ] Wire up metrics, logging, and distributed tracing
         - [ ] Run integration and load test suites against staging
         - [ ] Complete security review and dependency audit
 
-        ### 8.3 Phase 3: Shadow Mode (Week 5)
+        ### Phase 3: Shadow Mode (Week 5)
 
-        - [ ] Mirror production traffic to the new system without serving its responses
+        - [ ] Mirror production traffic without serving the new system's responses
         - [ ] Compare outputs against the existing system and investigate divergence
         - [ ] Tune capacity, connection pools, and consumer parallelism
 
-        ### 8.4 Phase 4: Canary Release (Week 6)
+        ### Phase 4: Canary Release (Week 6)
 
         - [ ] Route 5% of traffic to the new system
         - [ ] Watch latency, error rate, and saturation against agreed thresholds
         - [ ] Increase gradually: 5% -> 25% -> 50% -> 100%
         - [ ] Keep a tested rollback path at every step
 
-        ### 8.5 Phase 5: Full Production (Week 7-8)
+        ### Phase 5: Full Production (Week 7-8)
 
         - [ ] Complete traffic migration
         - [ ] Decommission superseded components
         - [ ] Publish runbooks and on-call documentation
-
-        ---
-        """);
+        """;
   }
 
-  private void appendAppendix(StringBuilder document) {
-    document.append("""
-
-        ## 9. Appendix
-
-        ### 9.1 Monitoring and Alerting
+  private String appendix() {
+    return """
+        ### Monitoring and Alerting
 
         | Metric | Alert Threshold |
         | --- | --- |
@@ -524,23 +706,29 @@ public class DesignDocumentComposer {
         | Database replication lag | > 10 seconds |
         | Cache hit rate | < 80% |
 
-        ### 9.2 Dependencies
-
-        """);
-    document.append(dependencyTable(document.toString())).append("\n");
+        ### Dependencies
+        """;
   }
 
   /**
-   * The dependency table is derived from the technologies the generated sections actually
-   * mention, so it stays accurate for this system instead of listing a fixed stack.
+   * The dependency table is derived from the technologies the generated sections actually mention,
+   * so it stays accurate for this system instead of listing a fixed stack. It runs last because it
+   * reads the finished document.
    */
+  private void replaceDependencyPlaceholder(StringBuilder document) {
+    int marker = document.indexOf("### Dependencies");
+    if (marker < 0) {
+      return;
+    }
+    int insertAt = marker + "### Dependencies".length();
+    document.insert(insertAt, "\n\n" + dependencyTable(document.substring(0, marker)));
+  }
+
   private String dependencyTable(String documentSoFar) {
     String haystack = documentSoFar.toLowerCase(Locale.ROOT);
-    Map<String, String[]> catalogue = technologyCatalogue();
-
     StringBuilder table = new StringBuilder("| Service | Version | Purpose |\n| --- | --- | --- |\n");
     int matches = 0;
-    for (Map.Entry<String, String[]> entry : catalogue.entrySet()) {
+    for (Map.Entry<String, String[]> entry : technologyCatalogue().entrySet()) {
       if (haystack.contains(entry.getKey())) {
         String[] row = entry.getValue();
         table.append("| %s | %s | %s |\n".formatted(row[0], row[1], row[2]));

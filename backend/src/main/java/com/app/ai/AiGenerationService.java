@@ -79,7 +79,9 @@ public class AiGenerationService {
     String model = modelOrDefault(request.model());
     if (ollamaProperties.enabled()) {
       try {
-        String markdown = generateOllamaDocument(request.prompt(), model);
+        String markdown =
+            generateOllamaDocument(
+                request.prompt(), model, request.requestId(), DocumentMode.from(request.mode()));
         return new AiGenerationResponse(
             "OLLAMA",
             "Generated technical design document with local Ollama model.",
@@ -144,8 +146,9 @@ public class AiGenerationService {
    * The composer already retries nothing and falls back per section, so a whole-document retry
    * here would re-run every section - minutes of work - to fix at most one of them.
    */
-  private String generateOllamaDocument(String prompt, String model) {
-    return documentComposer.compose(titleFromPrompt(prompt), prompt, model);
+  private String generateOllamaDocument(
+      String prompt, String model, String requestId, DocumentMode mode) {
+    return documentComposer.compose(titleFromPrompt(prompt), prompt, model, requestId, mode);
   }
 
   /**

@@ -17,6 +17,19 @@ public class OllamaClient {
   }
 
   public String generate(String model, String prompt, boolean jsonMode) {
+    return generate(model, prompt, jsonMode ? "json" : null);
+  }
+
+  /**
+   * Ollama accepts a full JSON Schema in {@code format} and constrains decoding to it, which makes
+   * a malformed or off-schema response unsamplable rather than merely unlikely. Worth using
+   * wherever the caller needs values it will compute with rather than prose it will display.
+   */
+  public String generateStructured(String model, String prompt, Map<String, Object> jsonSchema) {
+    return generate(model, prompt, jsonSchema);
+  }
+
+  private String generate(String model, String prompt, Object format) {
     String resolvedModel = resolveModel(model);
     if (resolvedModel == null || resolvedModel.isBlank()) {
       throw new OllamaUnavailableException(
@@ -24,9 +37,9 @@ public class OllamaClient {
     }
 
     Map<String, Object> request =
-        jsonMode
-            ? Map.of("model", resolvedModel, "prompt", prompt, "stream", false, "format", "json")
-            : Map.of("model", resolvedModel, "prompt", prompt, "stream", false);
+        format == null
+            ? Map.of("model", resolvedModel, "prompt", prompt, "stream", false)
+            : Map.of("model", resolvedModel, "prompt", prompt, "stream", false, "format", format);
 
     OllamaGenerateResponse response;
     try {

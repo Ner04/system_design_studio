@@ -1,8 +1,9 @@
 import { ArrowUp, Loader2, Sparkles } from "lucide-react";
 import { examplePrompts, supportedModels, useDesignGeneration } from "./useDesignGeneration";
+import { GenerationProgressBar } from "./GenerationProgressBar";
 
 export function CompactAIPromptBar() {
-  const { prompt, setPrompt, model, setModel, isGenerating, lastMessage, runGeneration } =
+  const { prompt, setPrompt, model, setModel, isGenerating, lastMessage, progress, runGeneration } =
     useDesignGeneration();
 
   return (
@@ -50,7 +51,11 @@ export function CompactAIPromptBar() {
           </button>
         ))}
       </div>
-      <p className="mt-1 truncate text-xs text-slate-500">{lastMessage}</p>
+      {isGenerating ? (
+        <GenerationProgressBar progress={progress} compact />
+      ) : (
+        <p className="mt-1 truncate text-xs text-slate-500">{lastMessage}</p>
+      )}
     </div>
   );
 }
