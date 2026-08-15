@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (Java 21)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      # Ollama is not available in CI, so the suite runs against the deterministic
+      # path. application-test.yml sets app.ai.ollama.enabled=false, and the units
+      # covering generation stub the client directly.
+      - name: Run tests
+        working-directory: backend
+        run: mvn --batch-mode test
+
+      - name: Package
+        working-directory: backend
+        run: mvn --batch-mode package -DskipTests
+
+  frontend:
+    name: Frontend (Node 20)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # `npm run build` runs `tsc -b` before vite, so this covers typechecking too.
+      - name: Typecheck and build
+        run: npm run build

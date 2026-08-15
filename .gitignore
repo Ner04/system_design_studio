@@ -1,4 +1,21 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
 backend/target/
+
+# Runtime data (H2 database files)
+data/
 backend/data/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Logs
+*.log

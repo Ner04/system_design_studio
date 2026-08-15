@@ -1,6 +1,0 @@
-com/app/JsonTestUtils.class
-com/app/ai/CapacityEstimatorTest.class
-com/app/BackendApiIntegrationTest.class
-com/app/ai/OllamaClientTest.class
-com/app/ai/DesignDocumentComposerTest.class
-com/app/OllamaJsonSanitizerTest.class
