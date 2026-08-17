@@ -36,6 +36,11 @@ export function CanvasToolbar({ showGrid, onToggleGrid }: CanvasToolbarProps) {
   const edges = useDiagramStore((state) => state.edges);
   const query = useDiagramStore((state) => state.query);
   const setQuery = useDiagramStore((state) => state.setQuery);
+  const undo = useDiagramStore((state) => state.undo);
+  const redo = useDiagramStore((state) => state.redo);
+  // Subscribing to the stack lengths rather than calling canUndo() keeps the buttons reactive.
+  const canUndo = useDiagramStore((state) => state.past.length > 0);
+  const canRedo = useDiagramStore((state) => state.future.length > 0);
   const zoomPercent = Math.round(viewport.zoom * 100);
 
   return (
@@ -53,17 +58,21 @@ export function CanvasToolbar({ showGrid, onToggleGrid }: CanvasToolbarProps) {
       <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-white/10 bg-ink-900/90 p-1.5 shadow-panel backdrop-blur">
         <button
           type="button"
-          title="Undo (Ctrl+Z)"
+          title="Undo (Cmd+Z)"
           aria-label="Undo"
-          className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-white/10 hover:text-white"
+          onClick={undo}
+          disabled={!canUndo}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-500"
         >
           <Undo2 size={15} />
         </button>
         <button
           type="button"
-          title="Redo (Ctrl+Shift+Z)"
+          title="Redo (Cmd+Shift+Z)"
           aria-label="Redo"
-          className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-white/10 hover:text-white"
+          onClick={redo}
+          disabled={!canRedo}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-500"
         >
           <Redo2 size={15} />
         </button>
