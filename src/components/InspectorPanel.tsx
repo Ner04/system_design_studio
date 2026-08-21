@@ -1,4 +1,4 @@
-import { AlignCenter, AlignLeft, AlignRight, BringToFront, Lock, SendToBack, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useDiagramStore } from "../store/diagramStore";
 import { annotationLabels, annotationToneKeys, annotationTones } from "../diagram/annotationStyle";
 import { isAnnotationNode, type AnnotationTone } from "../types/diagram";
@@ -147,28 +147,6 @@ export function InspectorPanel() {
             </div>
           </section>
 
-          <section className="space-y-3 p-4">
-            <FieldLabel>Layer</FieldLabel>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { label: "Bring Forward", icon: BringToFront },
-                { label: "Send Back", icon: SendToBack },
-                { label: "Lock", icon: Lock },
-              ].map((action) => {
-                const ActionIcon = action.icon;
-                return (
-                  <button
-                    key={action.label}
-                    type="button"
-                    className="flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[0.035] text-xs font-semibold text-slate-400 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
-                  >
-                    <ActionIcon size={14} />
-                    {action.label}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
 
           <section className="border-t border-white/10 p-4">
             <button

@@ -1,4 +1,5 @@
 import {
+  Check,
   Download,
   Grid3X3,
   Maximize2,
@@ -7,26 +8,85 @@ import {
   Redo2,
   Save,
   Search,
-  Share2,
-  Sparkles,
   Undo2,
 } from "lucide-react";
+import { useState } from "react";
 import { useReactFlow, useViewport } from "@xyflow/react";
 import { useDiagramStore } from "../store/diagramStore";
+import { useDocumentStore } from "../store/documentStore";
+import { saveDesign } from "../services/persistenceService";
 
 type CanvasToolbarProps = {
   showGrid: boolean;
   onToggleGrid: () => void;
 };
 
+function triggerDownload(filename: string, href: string) {
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = filename;
+  link.click();
+}
+
 function downloadJson(filename: string, payload: unknown) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
+  triggerDownload(filename, url);
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Rasterises the canvas by inlining it into an SVG foreignObject and painting that to a canvas.
+ * It avoids a screenshot dependency, at the cost of needing the background painted explicitly -
+ * a transparent PNG on a dark diagram is unreadable wherever it gets pasted.
+ */
+async function downloadPng(filename: string, scale = 2) {
+  const viewportEl = document.querySelector<HTMLElement>(".react-flow__viewport");
+  const paneEl = document.querySelector<HTMLElement>(".react-flow");
+  if (!viewportEl || !paneEl) throw new Error("Canvas not ready");
+
+  const bounds = paneEl.getBoundingClientRect();
+  const width = Math.ceil(bounds.width);
+  const height = Math.ceil(bounds.height);
+
+  const clone = viewportEl.cloneNode(true) as HTMLElement;
+  const styles = Array.from(document.styleSheets)
+    .flatMap((sheet) => {
+      try {
+        return Array.from(sheet.cssRules).map((rule) => rule.cssText);
+      } catch {
+        // Cross-origin stylesheets cannot be read; the app's own styles are local.
+        return [];
+      }
+    })
+    .join("\n");
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+      <foreignObject width="100%" height="100%">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">
+          <style>${styles}</style>${clone.outerHTML}
+        </div>
+      </foreignObject>
+    </svg>`;
+
+  const image = new Image();
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error("Could not rasterise the canvas"));
+  });
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas 2D unavailable");
+  context.fillStyle = "#080a0f";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.scale(scale, scale);
+  context.drawImage(image, 0, 0);
+
+  triggerDownload(filename, canvas.toDataURL("image/png"));
 }
 
 export function CanvasToolbar({ showGrid, onToggleGrid }: CanvasToolbarProps) {
@@ -41,7 +101,25 @@ export function CanvasToolbar({ showGrid, onToggleGrid }: CanvasToolbarProps) {
   // Subscribing to the stack lengths rather than calling canUndo() keeps the buttons reactive.
   const canUndo = useDiagramStore((state) => state.past.length > 0);
   const canRedo = useDiagramStore((state) => state.future.length > 0);
+  const title = useDocumentStore((state) => state.title);
+  const markdown = useDocumentStore((state) => state.markdown);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const zoomPercent = Math.round(viewport.zoom * 100);
+
+  const handleSave = async () => {
+    setSaveState("saving");
+    try {
+      await saveDesign(title, { nodes, edges }, markdown);
+      setSaveState("saved");
+      // Returning to idle keeps the button honest about what a further click would do.
+      window.setTimeout(() => setSaveState("idle"), 2400);
+    } catch {
+      setSaveState("failed");
+      window.setTimeout(() => setSaveState("idle"), 3200);
+    }
+  };
+
+  const saveLabel = { idle: "Save", saving: "Saving", saved: "Saved", failed: "Retry" }[saveState];
 
   return (
     <div className="pointer-events-none absolute inset-x-4 top-4 z-20 flex flex-wrap items-start justify-between gap-3">
@@ -127,18 +205,18 @@ export function CanvasToolbar({ showGrid, onToggleGrid }: CanvasToolbarProps) {
 
         <button
           type="button"
-          title="Share"
-          aria-label="Share"
-          className="hidden h-8 items-center gap-2 rounded-md px-3 text-xs font-semibold text-slate-400 transition hover:bg-white/10 hover:text-white md:flex"
-        >
-          <Share2 size={14} />
-          Share
-        </button>
-        <button
-          type="button"
-          title="Export JSON"
-          aria-label="Export JSON"
-          onClick={() => downloadJson("system-design-studio-diagram.json", { nodes, edges })}
+          title="Export PNG (Alt-click for JSON)"
+          aria-label="Export PNG"
+          onClick={(event) => {
+            const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+            if (event.altKey) {
+              downloadJson(`${slug || "diagram"}.json`, { nodes, edges });
+              return;
+            }
+            void downloadPng(`${slug || "diagram"}.png`).catch(() =>
+              downloadJson(`${slug || "diagram"}.json`, { nodes, edges }),
+            );
+          }}
           className="hidden h-8 items-center gap-2 rounded-md px-3 text-xs font-semibold text-slate-400 transition hover:bg-white/10 hover:text-white md:flex"
         >
           <Download size={14} />
@@ -146,21 +224,20 @@ export function CanvasToolbar({ showGrid, onToggleGrid }: CanvasToolbarProps) {
         </button>
         <button
           type="button"
-          title="AI Generate"
-          aria-label="AI Generate"
-          className="hidden h-8 items-center gap-2 rounded-md bg-accent-blue px-3 text-xs font-semibold text-white shadow-glow transition hover:bg-blue-400 md:flex"
-        >
-          <Sparkles size={14} />
-          AI
-        </button>
-        <button
-          type="button"
-          title="Save"
+          title="Save diagram and document"
           aria-label="Save"
-          className="flex h-8 items-center gap-2 rounded-md bg-white px-3 text-xs font-semibold text-ink-950 transition hover:bg-slate-200"
+          onClick={handleSave}
+          disabled={saveState === "saving"}
+          className={`flex h-8 items-center gap-2 rounded-md px-3 text-xs font-semibold transition disabled:cursor-not-allowed ${
+            saveState === "failed"
+              ? "bg-rose-500/90 text-white hover:bg-rose-500"
+              : saveState === "saved"
+                ? "bg-accent-green text-ink-950"
+                : "bg-white text-ink-950 hover:bg-slate-200"
+          }`}
         >
-          <Save size={14} />
-          Save
+          {saveState === "saved" ? <Check size={14} /> : <Save size={14} />}
+          {saveLabel}
         </button>
       </div>
     </div>

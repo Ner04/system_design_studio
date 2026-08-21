@@ -18,7 +18,9 @@ export type SupportedModel = (typeof supportedModels)[number];
 
 export function useDesignGeneration(initialPrompt = allPrompts[0]) {
   const replaceGraph = useDiagramStore((state) => state.replaceGraph);
+  const setViewMode = useDiagramStore((state) => state.setViewMode);
   const replaceDocument = useDocumentStore((state) => state.replaceDocument);
+  const streamDocument = useDocumentStore((state) => state.streamDocument);
   const [prompt, setPrompt] = useState(initialPrompt);
   const [model, setModel] = useState<SupportedModel>("llama3");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -31,9 +33,26 @@ export function useDesignGeneration(initialPrompt = allPrompts[0]) {
     setIsGenerating(true);
     setProgress(undefined);
     setLastMessage(`Generating with ${model}...`);
+    // The document is written section by section over several minutes. Showing the canvas and
+    // the document together means each section appears as it lands instead of after a long
+    // blank wait, and the diagram arrives well before the document finishes.
+    setViewMode("both");
 
     try {
-      const result = await generateSystemDesign(nextPrompt, model, setProgress, documentMode);
+      const result = await generateSystemDesign(
+        nextPrompt,
+        model,
+        (update) => {
+          setProgress(update);
+          if (update.partialMarkdown) {
+            streamDocument(update.partialMarkdown);
+          }
+        },
+        documentMode,
+        (diagram) => {
+          if (diagram.graph) replaceGraph(diagram.graph);
+        },
+      );
       if (result.graph) replaceGraph(result.graph);
       if (result.markdown) replaceDocument(result.title, result.markdown);
       setLastMessage(`${result.status}: ${result.title}. ${result.message}`);

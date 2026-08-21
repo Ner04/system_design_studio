@@ -21,7 +21,12 @@ public class GenerationProgressTracker {
 
   private static final Duration STALE_AFTER = Duration.ofMinutes(15);
 
-  public record Progress(int completed, int total, String currentStep, Instant updatedAt) {}
+  /**
+   * @param partialMarkdown the document as written so far, so the browser can render sections as
+   *     they land instead of showing nothing for the minutes a full generation takes
+   */
+  public record Progress(
+      int completed, int total, String currentStep, String partialMarkdown, Instant updatedAt) {}
 
   private final Map<String, Progress> progressByRequestId = new ConcurrentHashMap<>();
 
@@ -30,14 +35,30 @@ public class GenerationProgressTracker {
       return;
     }
     evictStaleEntries();
-    progressByRequestId.put(requestId, new Progress(0, total, firstStep, Instant.now()));
+    progressByRequestId.put(requestId, new Progress(0, total, firstStep, "", Instant.now()));
   }
 
+  /**
+   * Advances the step without touching the document. The overload that carries markdown is called
+   * only when a section completes, so blanking it here would erase everything written so far for
+   * the whole time the next section is generating - which is most of the time.
+   */
   public void update(String requestId, int completed, int total, String currentStep) {
+    update(
+        requestId,
+        completed,
+        total,
+        currentStep,
+        progressFor(requestId).map(Progress::partialMarkdown).orElse(""));
+  }
+
+  public void update(
+      String requestId, int completed, int total, String currentStep, String partialMarkdown) {
     if (isBlank(requestId)) {
       return;
     }
-    progressByRequestId.put(requestId, new Progress(completed, total, currentStep, Instant.now()));
+    progressByRequestId.put(
+        requestId, new Progress(completed, total, currentStep, partialMarkdown, Instant.now()));
   }
 
   public void finish(String requestId) {

@@ -45,6 +45,7 @@ export async function generateSystemDesign(
   model = "mock-local",
   onProgress?: ProgressListener,
   mode: DocumentMode = "INTERVIEW",
+  onDiagramReady?: (diagram: AiGenerationResponse) => void,
 ): Promise<AiGenerationResponse> {
   const trimmedPrompt = prompt.trim();
   const safePrompt = trimmedPrompt || "Design Uber realtime driver tracking";
@@ -52,25 +53,29 @@ export async function generateSystemDesign(
   const stopPolling = onProgress ? pollProgress(requestId, onProgress) : undefined;
 
   try {
-    const [diagramResponse, documentResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/ai/generate-diagram`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: safePrompt, model }),
-      }),
-      fetch(`${API_BASE_URL}/api/ai/generate-document`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: safePrompt, model, requestId, mode }),
-      }),
-    ]);
+    // The diagram is one model call and the document is nine, so the diagram is shown the
+    // moment it lands rather than being held back until the document finishes.
+    const diagramPromise = fetch(`${API_BASE_URL}/api/ai/generate-diagram`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: safePrompt, model }),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("AI backend request failed");
+      const parsed = (await response.json()) as AiGenerationResponse;
+      onDiagramReady?.(parsed);
+      return parsed;
+    });
 
-    if (!diagramResponse.ok || !documentResponse.ok) {
-      throw new Error("AI backend request failed");
-    }
+    const documentPromise = fetch(`${API_BASE_URL}/api/ai/generate-document`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: safePrompt, model, requestId, mode }),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("AI backend request failed");
+      return (await response.json()) as AiGenerationResponse;
+    });
 
-    const diagram = (await diagramResponse.json()) as AiGenerationResponse;
-    const document = (await documentResponse.json()) as AiGenerationResponse;
+    const [diagram, document] = await Promise.all([diagramPromise, documentPromise]);
 
     return {
       ...diagram,

@@ -32,6 +32,8 @@ export type GenerationProgress = {
   completed: number;
   total: number;
   currentStep: string;
+  /** The document as written so far, so sections can be rendered as they land. */
+  partialMarkdown: string;
 };
 
 export type AiGenerationResponse = {

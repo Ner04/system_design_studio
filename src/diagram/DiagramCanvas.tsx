@@ -76,6 +76,9 @@ export function DiagramCanvas() {
   const groupSelected = useDiagramStore((state) => state.groupSelected);
   const eraseNode = useDiagramStore((state) => state.eraseNode);
   const eraseEdge = useDiagramStore((state) => state.eraseEdge);
+  const checkpoint = useDiagramStore((state) => state.checkpoint);
+  const undo = useDiagramStore((state) => state.undo);
+  const redo = useDiagramStore((state) => state.redo);
   const toolBeforePan = useRef<CanvasTool>("select");
 
   const visibleNodes = useMemo(() => {
@@ -122,7 +125,15 @@ export function DiagramCanvas() {
       // Modifier combos are clipboard/edit commands and must never also swap the
       // active tool, which is why they return instead of falling through.
       if (event.metaKey || event.ctrlKey) {
-        if (key === "c") {
+        if (key === "z") {
+          event.preventDefault();
+          // Shift+Cmd+Z is redo everywhere except Windows, where Ctrl+Y also works.
+          if (event.shiftKey) redo();
+          else undo();
+        } else if (key === "y") {
+          event.preventDefault();
+          redo();
+        } else if (key === "c") {
           event.preventDefault();
           copySelected();
         } else if (key === "v") {
@@ -177,7 +188,7 @@ export function DiagramCanvas() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [copySelected, deleteSelected, duplicateSelected, groupSelected, pasteCopied]);
+  }, [copySelected, deleteSelected, duplicateSelected, groupSelected, pasteCopied, redo, undo]);
 
   const handleSelectionChange = useCallback(
     ({ nodes: selectedNodes }: OnSelectionChangeParams) => {
@@ -250,6 +261,9 @@ export function DiagramCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        // A drag emits a stream of position changes, so the checkpoint is taken once at the
+        // start rather than in onNodesChange, which would flood the history stack.
+        onNodeDragStart={checkpoint}
         onNodeClick={(_, node) => {
           if (isErasing) {
             eraseNode(node.id);

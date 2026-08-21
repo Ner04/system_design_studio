@@ -38,8 +38,12 @@ public class AiController {
         .map(
             progress ->
                 new GenerationProgressResponse(
-                    true, progress.completed(), progress.total(), progress.currentStep()))
-        .orElseGet(() -> new GenerationProgressResponse(false, 0, 0, ""));
+                    true,
+                    progress.completed(),
+                    progress.total(),
+                    progress.currentStep(),
+                    progress.partialMarkdown()))
+        .orElseGet(() -> new GenerationProgressResponse(false, 0, 0, "", ""));
   }
 
   @PostMapping("/generate-diagram")

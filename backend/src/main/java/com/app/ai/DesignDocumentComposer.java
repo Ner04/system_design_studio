@@ -103,6 +103,10 @@ public class DesignDocumentComposer {
       }
 
       document.append(body.strip()).append("\n\n---\n");
+      // Publishing the document so far lets the browser render each section as it lands,
+      // which turns a multi-minute blank wait into visible progress.
+      progressTracker.update(
+          requestId, completedSteps, totalSteps, section.title(), document.toString());
       if (establishedComponents.isEmpty() && section.kind() == Kind.MODEL) {
         establishedComponents = componentContext(body);
       }
